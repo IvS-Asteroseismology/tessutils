@@ -9,7 +9,7 @@ from multiprocessing import Pool
 # External modules
 import numpy as np
 import pandas as pd
-import lightkurve as lk 
+import lightkurve as lk
 from scipy import ndimage
 from astropy.stats.funcs import median_absolute_deviation as MAD
 import astropy.units as u
@@ -36,7 +36,7 @@ def download_tpf(TIC,
                  ncores=None):
     """
     Purpose:
-        Download a TESS cut image(s) or target pixel file(s) (TPF) for (a) given 
+        Download a TESS cut image(s) or target pixel file(s) (TPF) for (a) given
         TIC number(s).
 
     Args:
@@ -72,7 +72,7 @@ def download_tpf(TIC,
 
     Returns:
         None
-        
+
     Examples:
         1. Download all TPFs available for TIC 374944608:
             > TIC = 374944608
@@ -81,8 +81,8 @@ def download_tpf(TIC,
         Parallelize the download using 2 cores and display a progress bar:
             > TICs = [38845463,374944608]
             > download_tpf(TICs, progressbar=True, ncores=2, sectors=[1,2])
-    """    
-    
+    """
+
     # Handle a list-like input
     valid_types = (list,np.ndarray,pd.core.series.Series)
     if isinstance(TIC,valid_types):
@@ -103,20 +103,20 @@ def download_tpf(TIC,
                 it = tqdm(it, total=len(TIC))
             # Exhaust the iterator
             deque(it, maxlen=0)
-        return   
-    
+        return
+
     utils.contains_TIC_and_sector(pattern)
     outputdir = Path('tpfs') if outputdir is None else Path(outputdir)
     if not outputdir.exists():
         outputdir.mkdir(parents=True)
-    
+
     # Search MAST for all FFIs available for TIC
     tries = 1
     while True:
         if tries > max_queryTries:
             print(f'Skipped TIC={TIC}: Maximum number of MAST query retries ({max_queryTries}) exceeded.')
             return
-        try: 
+        try:
             tesscuts = lk.search_tesscut(f'TIC {TIC}')
             break # Exit the loop if TIC is found
         except Exception as e:
@@ -139,7 +139,7 @@ def download_tpf(TIC,
         print(f'The MAST query returned a different id: {ids}')
         print('No FITS files saved')
         return
-    
+
     # Get sector numbers
     try:
         secs = np.array([ re.match('TESS Sector (\d+)', text).group(1) for text in tesscuts.table['observation'] ])
@@ -157,10 +157,10 @@ def download_tpf(TIC,
     except KeyError:
         secs = np.array([ re.match('TESS Sector (\d+)', text).group(1) for text in tesscuts.table['mission'] ])
     secs = secs.astype('int32')
-    
+
     # Generate output names
     outputnames = np.array([outputdir/Path(pattern.format(TIC=TIC, SECTOR=sec)) for sec in secs])
-    
+
     if not overwrite:
         # Skip already downloaded files
         files = np.array([file.exists() for file in outputnames])
@@ -203,7 +203,7 @@ def download_tpf(TIC,
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
             tpf.header.set('TICID',value=TIC)
-        sector = tpf.sector 
+        sector = tpf.sector
         outputname = outputdir/Path(pattern.format(TIC=TIC, SECTOR=sector))
         tries = 1
         # Attempt to write FITS file
@@ -224,7 +224,7 @@ def download_tpf(TIC,
 
         # Message for successful save
         print(f'Saved: {outputname.as_posix()}')
-    
+
 def normalize_lightCurve(lc):
     '''Function applied to light curves of individual TESS sectors before stitching them'''
     median = np.median(lc.flux)
@@ -250,12 +250,12 @@ def threshold_mask(image,
     Source
     ----------
     LightKurve module
-    
+
     Notes
     ----------
     The original only works as a method. I (Stefano) made it a function by
     adapting the necessary lines. Such a lines are indicated with a comment
-    that says Stefano.  
+    that says Stefano.
 
     Parameters
     ----------
@@ -305,7 +305,7 @@ def query_TIC(target,
               search_radius=600.*u.arcsec,
               **kwargs):
         """
-        Retrieving information from the TESS input catalog. 
+        Retrieving information from the TESS input catalog.
 
         Source
         ----------
@@ -327,37 +327,37 @@ def query_TIC(target,
         **kwargs:
             dict to be passed to astroquery.Catalogs.query_object or query_region.
         """
-        
+
         def _tic_handler(lc,signum):
             '''Supporting function of `query_TIC`'''
             print('the query of the TIC is taking a long time... Something may be wrong with the database right now...')
 
         deg_radius = float(search_radius / u.deg)
         arc_radius = float(search_radius / u.arcsec)
-        
+
         tic = None
         tess_coord = None
-        tmag = None 
+        tmag = None
         nb_coords = []
         nb_tmags = []
         tic_index = -1
-        
+
         try:
             # The TIC query should finish relatively fast, but has sometimes taken (a lot!) longer.
             # Setting a timer to warn the user if this is the case...
             signal.signal(signal.SIGALRM,_tic_handler)
             signal.alarm(30) # This should be finished after 30 seconds, but it may take longer...
-            
+
             catalogTIC = Catalogs.query_region(target_coord, catalog="TIC", radius=deg_radius,**kwargs)
             signal.alarm(0)
-            
+
         except:
             print(f"no entry could be retrieved from the TIC around {target}.")
             catalogTIC = []
-        
+
         if(len(catalogTIC) == 0):
             print(f"no entry around {target} was found in the TIC within a {deg_radius:5.3f} degree radius.")
-        
+
         else:
             if not (tic_id is None):
                 # tic_index = np.argmin((np.array(catalogTIC['ID'],dtype=int) - int(tic_id))**2.) # Original line
@@ -369,28 +369,28 @@ def query_TIC(target,
                     tic_index = tic_index.item()
             else:
                 tic_index = np.argmin(catalogTIC['dstArcSec'])
-        
+
             if(tic_index < 0):
                 print(f"the attempt to retrieve target {target} from the TIC failed.")
-            
+
             else:
                 tic = int(catalogTIC[tic_index]['ID'])
                 ra = catalogTIC[tic_index]['ra']
                 dec = catalogTIC[tic_index]['dec']
                 tmag = catalogTIC[tic_index]['Tmag']
-                
+
                 # Retrieve the coordinates
                 tess_coord = SkyCoord(ra, dec, unit = "deg")
-                
+
                 # Collecting the neighbours
                 if(len(catalogTIC) > 1):
                     for itic, tic_entry in enumerate(catalogTIC):
                         if(itic != tic_index):
                             nb_coords.append(SkyCoord(tic_entry['ra'], tic_entry['dec'], unit = "deg"))
                             nb_tmags.append(tic_entry['Tmag'])
-        
+
         nb_tmags = np.array(nb_tmags)
-        
+
         return tic, tess_coord, tmag, nb_coords, nb_tmags
 
 def check_aperture_mask(aperture,
@@ -416,7 +416,7 @@ def check_aperture_mask(aperture,
             Sting to prepend to the error message. Default is ''.
 
     Raises:
-        ValueError 
+        ValueError
         ValueError
         AttributeError
 
@@ -461,7 +461,7 @@ def check_aperture_mask(aperture,
 
 def find_fainter_adjacent_pixels(seeds,
                                  image,
-                                 max_iter=100):    
+                                 max_iter=100):
     """
     Purpose:
         Given an initial pixel(s) a.k.a. seed, find surrounding pixels until the
@@ -550,7 +550,7 @@ def mag2flux(mag, zp=20.60654144):
     Source
     ----------
     Source: https://tasoc.dk/code/_modules/photometry/utilities.html#mag2flux
-    
+
     Parameters:
         mag (float): Magnitude in TESS band.
 
@@ -567,7 +567,7 @@ def contamination(info,
         Calculate the fraction of flux in the aperture the mask that comes from
         neighbour stars. Done by means of fitting 2D Gaussians and a plane to
         the image.
-        
+
     Args:
         info:
             SimpleNamespace object with the following attributes:
@@ -615,9 +615,9 @@ def contamination(info,
     Gaussian2D = functional_models.Gaussian2D
     Planar2D = functional_models.Planar2D
     Gaussians = [ Gaussian2D(amplitude=a,
-                             x_mean=x, 
-                             y_mean=y, 
-                             x_stddev=1, 
+                             x_mean=x,
+                             y_mean=y,
+                             x_stddev=1,
                              y_stddev=1) for a,x,y in zip(fluxes,xpos,ypos) ]
     nGaussians = len(Gaussians)
     model = np.sum(Gaussians)
@@ -694,8 +694,8 @@ def contamination(info,
     neighbour_flux = np.sum( (Fit(x,y)-TargetStar(x,y)-Plane(x,y))[mask_aperture] )
     target_flux = np.sum( TargetStar(x,y)[mask_aperture] )
     bkg_flux = np.sum( Plane(x,y)[mask_aperture] )
-    fraction_ap_contamination = neighbour_flux/target_flux 
-    # In order to pickle, remove functions references in tie attribute of the fit components 
+    fraction_ap_contamination = neighbour_flux/target_flux
+    # In order to pickle, remove functions references in tie attribute of the fit components
     TargetStar.y_stddev.tied = None
     if nGaussians > 2:
         try:
@@ -840,7 +840,7 @@ def refine_aperture(info,
             if overlaps.sum() == 0:
                 break
             else:
-                try:    
+                try:
                     # Make a new aperture mask
                     threshold = next(thresholds)
                     aperture = threshold_mask(image, threshold=threshold, reference_pixel='center')
@@ -907,7 +907,7 @@ def exclude_intervals(tpf,
         tpf (lightkurve.targetpixelfile.TessTargetPixelFile):
             Same lightKurve target pixel file object as in the argumant, but
             with the updated attribute `quality_mask`.
-    """    
+    """
     # Validate the input
     if not isinstance(intervals, dict):
         raise TypeError('`intervals` must be a dictionary.')
@@ -921,7 +921,7 @@ def exclude_intervals(tpf,
                       all(isinstance(interval[1],valid_types) for interval in value)]
         if not all(conditions):
             raise TypeError('`intervals` values must be lists of tuples indicating the intervals to exclude. Each tuple must have two elements: the start and end of the interval expressed as a `~astropy.units.Quantity` or a `~astropy.units.Unit`.')
-    
+
     if info.sector in intervals.keys():
         intervals = intervals[info.sector]
         # Format accordingly to the TPF time
@@ -965,11 +965,11 @@ def find_number_of_PCs(info,
                 * info.pca_all.pc_variances
                 * info.pca_all.threshold_variance
                 * info.pca_all.nbins
-        regressors (numpy.ndarray): 
+        regressors (numpy.ndarray):
             Regressors to be used for the design matrix.
         lc (lightkurve.lightcurve.TessLightCurve):
             Light curve.
-        npc (int, optional): 
+        npc (int, optional):
             Maximum number of principal components to use. Defaults to 7.
         nbins (int, optional):
             Number of bins used to chop the principal components in smaller
@@ -980,9 +980,9 @@ def find_number_of_PCs(info,
             Threshold variance to use to find the number of principal
             components. Principal components with variance above this threshold
             are not considered. Defaults to 1e-4.
-    
+
     Returns:
-    
+
         new_npc (int):
             Number of principal components whose variance is below the
             threshold.
@@ -1124,7 +1124,7 @@ def extract_light_curve(fitsFile,
             no threshold leads to only the target star within the aperture mask,
             then the light curve extraction is halted. Defaults to
             iter([7.5, 10, 15, 20, 30, 40, 50]).
-        max_num_of_pc (int, optional): 
+        max_num_of_pc (int, optional):
             Maximum number of principal components to use. Defaults to 7.
         num_of_pc_bins (int, optional):
             Number of bins used to chop the principal components in smaller
@@ -1150,12 +1150,12 @@ def extract_light_curve(fitsFile,
 
     Returns:
         None
-        
+
     Write:
         A pickle file containing a SimpleNamespace object with the attributes
         listed below. If there is a problem during the light curve extraction (or
         not need for some of the attributes), they will be set to None or numpy.nan.
-        
+
         1. tic:     (int)
         TIC number.
         2. sector:  (int)
@@ -1166,17 +1166,17 @@ def extract_light_curve(fitsFile,
         Declination.
         5. headers: (list)
         List with all headers in the original TPF.
-        
+
         6. fit: (types.SimpleNamespace)
         Information regarding the fit of 2D Gaussians reproducing the TPF's median cadence image.
         |--- 6.1. fitted_image:               (numpy.ndarray)
         |         TPF's median cadence image.
         |--- 6.2. Plane:                      (astropy.modeling.functional_models.Planar2D)
-        |         Fitted model (2D plane) of the background signal of the `fitted_image`. 
+        |         Fitted model (2D plane) of the background signal of the `fitted_image`.
         |--- 6.3. TargetStar:                 (astropy.modeling.functional_models.Gaussian2D)
-        |         Fitted model (2D Gaussian) of the target star in the `fitted_image`. 
+        |         Fitted model (2D Gaussian) of the target star in the `fitted_image`.
         |--- 6.4. Neighbours:                 (astropy.modeling.core.CompoundModel)
-        |         Fitted model (set of 2D Gaussians) of the neighbouring stars in the `fitted_image`. 
+        |         Fitted model (set of 2D Gaussians) of the neighbouring stars in the `fitted_image`.
         |--- 6.5. xPixel:                     (numpy.ndarra>)
         |         Domain of `fitted_image` expresed as pixel coordinates. Generated by `numpy.mgrid` function. X-like coordinates.
         |--- 6.6. yPixel:                     (numpy.ndarra>)
@@ -1224,7 +1224,7 @@ def extract_light_curve(fitsFile,
 
         10. aperture_threshold: (int)
             Number of sigma the aperture mask is brighter than the median flux of the TPF's median cadence image.
-            
+
         11. pca_all: (types.SimpleNamespace)
             Information regarding all principal components available to detrend the light curve.
         |--- 11.1. coef:               (numpy.ndarray)
@@ -1242,7 +1242,7 @@ def extract_light_curve(fitsFile,
         |--- 11.7. pc_variances:       (numpy.ndarray)
         |          Estimate level of variance of each normalized principal component. Calculated as the median variance of chopped principal componentes (partitions).
         |--- 11.8. threshold_variance: (float)
-        |          Principal components with `pc_variances` values above this are not considered for the linear regression. 
+        |          Principal components with `pc_variances` values above this are not considered for the linear regression.
         |--- 11.9. nbins:              (int)
         |          Number of partition each principal component is divided to calculate 'pc_variances`.
 
@@ -1284,7 +1284,7 @@ def extract_light_curve(fitsFile,
         |--- 18.1. lc:             (lightkurve.lightcurve.TessLightCurve)
         |          Light curve.
         |--- 18.2. outlier_mask:   (numpy.ndarray)
-        |          Mask indicating values marked for removal by the sigma clipping. 
+        |          Mask indicating values marked for removal by the sigma clipping.
         |--- 18.3. sigma_clipping: (int)
         |          Sigma value used by the sigma clipping method on the light curve flux.
 
@@ -1292,7 +1292,7 @@ def extract_light_curve(fitsFile,
             Regressed light curve with flux outliers removed by sigma clipping.
         20. median_image:            (numpy.ndarray)
             TPF's median cadence image.
-            
+
         21. masks: (types.SimpleNamespace)
             Information regarding the masks for the TPF's median cadence image.
         |--- 21.1. aperture:   (numpy.ndarray)
@@ -1337,14 +1337,14 @@ def extract_light_curve(fitsFile,
                 # Exhaust the iterator
                 deque(it, maxlen=0)
         return
-    
+
     if not isinstance(fitsFile,str):
         raise TypeError('`fitsFile` must be a string pointing to the TESS Target Pixel File to process. It can also be a list of those, including numpy.ndarray and pandas.core.series.Series.')
-            
+
     fitsFile = Path(fitsFile)
     # Print name of file being processed
     if verbose:
-        print(f'Working on {fitsFile.name}')  
+        print(f'Working on {fitsFile.name}')
     # Check i/o directories and files
     if not (outputdir := Path(outputdir)).exists():
         outputdir.mkdir(parents=True)
@@ -1375,7 +1375,7 @@ def extract_light_curve(fitsFile,
     # Store to results
     results.tic = tpf.get_keyword('ticid')
     results.sector = tpf.get_keyword('sector')
-    results.ra = tpf.ra 
+    results.ra = tpf.ra
     results.dec = tpf.dec
     # Initialize messages
     id_msg = f'TIC {results.tic} Sector {results.sector}: Skipped: '
@@ -1389,7 +1389,7 @@ def extract_light_curve(fitsFile,
     aperture_mask = threshold_mask(results.median_image, threshold=aperture_mask_threshold, reference_pixel='center')
     background_mask = ~ threshold_mask(results.median_image, threshold=background_mask_threshold, reference_pixel=None)
     # Exclude NaN values outside the camera
-    background_mask &= ~np.isnan(results.median_image) 
+    background_mask &= ~np.isnan(results.median_image)
     # Estimate the median flux background
     median_background_flux = np.median(results.median_image[background_mask])
     # Store to results
@@ -1508,7 +1508,7 @@ def extract_light_curve(fitsFile,
         # Store to results
         results.lc_trend = lc_trend
         results.lc_regressed = SimpleNamespace()
-        results.lc_regressed.lc = lc_regressed         
+        results.lc_regressed.lc = lc_regressed
         results.lc_regressed.outlier_mask = lc_mask_regressed_outliers
         results.lc_regressed.sigma_clipping = sigma_clipping
         results.lc_regressed_clean = lc_regressed_no_outliers
@@ -1555,7 +1555,7 @@ def group_lcs(inputdir,
             Defaults to 'groupped'.
         namePattern (str, optional):
             File name pattern used to search for the outputs of `extract_light_curve`.
-            It must contain the strings '{TIC}' and '{SECTOR}' to indicate the 
+            It must contain the strings '{TIC}' and '{SECTOR}' to indicate the
             position of the TIC number and sector number in the file name.
             Defaults to 'tic{TIC}_sec{SECTOR}_corrected.pickle'.
         outputname_pattern (str, optional):
@@ -1575,7 +1575,7 @@ def group_lcs(inputdir,
             sectors available for a TIC number are under one process, i.e., the
             parallelization happens at TIC level and not at sector level.
             Defaults to -1 max out available cores.
-    
+
     Returns:
         None
     """
@@ -1599,15 +1599,15 @@ def group_lcs(inputdir,
     # Select the TIC number to process
     if not TICs == 'all':
         if isinstance(TICs,int):
-            filesTable = filesTable.query('tic == @TICs')  
+            filesTable = filesTable.query('tic == @TICs')
         elif isinstance(TICs,(list,np.ndarray)):
-            filesTable = filesTable.query('tic in @TICs')  
+            filesTable = filesTable.query('tic in @TICs')
         else:
             raise ValueError(f'TICs must be "all", an integer or a list of integers. Got {TICs}')
     # Select the sectors to process
     if not sectors == 'all':
         if isinstance(sectors,int):
-            filesTable = filesTable.query('sector == @sectors')  
+            filesTable = filesTable.query('sector == @sectors')
         elif isinstance(sectors,(list,np.ndarray)):
             filesTable = filesTable.query('sector in @sectors')
         else:
@@ -1617,7 +1617,7 @@ def group_lcs(inputdir,
     def grouping(tic, group):
         """Unpickle all files for a TIC number, group them into a list, and pickle it."""
         # group = groups.get_group(tic)
-        all_sectors = [] 
+        all_sectors = []
         # Loop over each sector in the group
         for sector in group.iloc:
             # Unpickle
@@ -1630,7 +1630,7 @@ def group_lcs(inputdir,
         # Save
         utils.contains_TIC(outputname_pattern)
         name = Path(outputname_pattern.format(TIC=tic))
-        with open(outputdir/name, 'wb') as picklefile: 
+        with open(outputdir/name, 'wb') as picklefile:
             pickle.dump(all_sectors, picklefile)
     # Enable parallel processing
     if progressbar:
@@ -1699,9 +1699,9 @@ def stitch_group(inputdir,
     # Select the TIC number to process
     if not TICs == 'all':
         if isinstance(TICs,int):
-            filesTable = filesTable.query('tic == @TICs')  
+            filesTable = filesTable.query('tic == @TICs')
         elif isinstance(TICs,(list,np.ndarray)):
-            filesTable = filesTable.query('tic in @TICs')  
+            filesTable = filesTable.query('tic in @TICs')
         else:
             raise ValueError(f'TICs must be "all", an integer or a list of integers. Got {TICs}')
     # Group filenames by the TIC number
@@ -1714,18 +1714,18 @@ def stitch_group(inputdir,
             all_sectors = pickle.load(picklefile)
         # Read the results
         lcs = [sector.lc_regressed_clean for sector in all_sectors if sector.tag == 'OK']
-        # If no OK sectors 
+        # If no OK sectors
         if len(lcs) == 0:
             return None
         # Sticht the light curve
-        lc = lk.LightCurveCollection(lcs).stitch(corrector_func=normalize_lightCurve)        
+        lc = lk.LightCurveCollection(lcs).stitch(corrector_func=normalize_lightCurve)
         # Save LC as CSV file
         NameOutput_StitchedLC = Path(outputname_pattern.format(TIC=TIC))
         outputname = outputdir/NameOutput_StitchedLC
         if outputname.exists() and not overwrite:
             print(f'Skipped: File {outputname.name} already exists.')
         else:
-            lc.to_csv(outputname)
+            lc.to_csv(outputname, overwrite=overwrite)
     # Enable parallel processing
     TICs = groups.groups.keys()
     if progressbar:
@@ -1757,7 +1757,7 @@ def get_group_summary(files,
             * tag: Message about the light curve extraction.
             * time_span: Time span of the light curve in days.
             * time_points: Number of time points (cadences) in the light curve.
-         
+
     Args:
         files (str | list[str]):
             Path to pickle file created by `group_lcs`. It can also be a list of
@@ -1825,7 +1825,7 @@ def get_group_summary(files,
                     break
             value = tmp
             return value
-        
+
         # Estimates to extract
         summary = SimpleNamespace()
         summary.tic = extract_value(info, 'tic')
@@ -1849,7 +1849,7 @@ def get_group_summary(files,
             span = lc.time.max() - lc.time.min()
             summary.time_span = span.value
             summary.time_points = lc.time.size
-        
+
         return summary
 
     if isinstance(files,str):
@@ -1869,9 +1869,9 @@ def get_group_summary(files,
             # Select the TIC number to process
             if not TICs == 'all':
                 if isinstance(TICs,int):
-                    filesTable = filesTable.query('tic == @TICs')  
+                    filesTable = filesTable.query('tic == @TICs')
                 elif isinstance(TICs,(list,np.ndarray,pd.core.series.Series)):
-                    filesTable = filesTable.query('tic in @TICs')  
+                    filesTable = filesTable.query('tic in @TICs')
                 else:
                     raise ValueError(f'TICs must be "all", an integer or a list of integers. Got {TICs}')
             files = filesTable['filepath'].astype(str).values
@@ -1890,6 +1890,6 @@ def get_group_summary(files,
         sectorsInfo = read_pickle_file(file)
         for sectorInfo in sectorsInfo:
             summaries.append(get_summary(sectorInfo).__dict__)
-    
+
     if overwrite or not Path(csvname).exists():
         pd.DataFrame(summaries).to_csv(csvname, index=False)
