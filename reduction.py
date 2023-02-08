@@ -225,10 +225,31 @@ def download_tpf(TIC,
         # Message for successful save
         print(f'Saved: {outputname.as_posix()}')
 
+
+def norm_and_bin_lc(lc, time_bin_size=0.5*u.h):
+    '''
+    Function applied to light curves of individual TESS sectors before
+    stitching them.
+    possiblity of binning
+    added by dario
+    '''
+    median = np.nanmedian(lc.flux)
+    lc = (lc - median) / median
+
+    if np.min(np.diff(lc.time)) < time_bin_size:
+        # below is a workaround for
+        # https://github.com/astropy/astropy/issues/11704
+        lc.primary_key = ("time",)
+        lc = lc.bin(time_bin_size=time_bin_size)
+
+    return lc
+
+
 def normalize_lightCurve(lc):
     '''Function applied to light curves of individual TESS sectors before stitching them'''
     median = np.median(lc.flux)
     return (lc-median)/median
+
 
 def threshold_mask(image,
                    threshold=3,
@@ -1644,7 +1665,9 @@ def stitch_group(inputdir,
                  outputname_pattern='lc_tic{TIC}_corrected_stitched.csv',
                  progressbar=False,
                  ncores=1,
-                 overwrite=False):
+                 overwrite=False,
+                 binlc=False,
+                 time_bin_size=30 * u.min):
     """
     Purpose:
         Stitch the light curves contained in the outputs from function `group_lcs`
@@ -1677,6 +1700,12 @@ def stitch_group(inputdir,
             Defaults to -1 max out available cores.
         overwrite (bool, optional):
             Whether to overwrite results. Defaults to False.
+        binlc (bool, optional):
+            Whether to bin lightcurve before stiching and periodogram
+            calculation. The binning time scale is determined through the
+            parameter time_bin_size.
+        time_bin_size (astropy quantity of dimension time):
+            Bin size in time, default value is 30min
 
     Returns:
         None
@@ -1718,7 +1747,11 @@ def stitch_group(inputdir,
         if len(lcs) == 0:
             return None
         # Sticht the light curve
-        lc = lk.LightCurveCollection(lcs).stitch(corrector_func=normalize_lightCurve)
+        if binlc:
+            corfunc = lambda x: norm_and_bin_lc(x, time_bin_size)
+        else:
+            corfunc = normalize_lightCurve
+        lc = lk.LightCurveCollection(lcs).stitch(corrector_func=corfunc)
         # Save LC as CSV file
         NameOutput_StitchedLC = Path(outputname_pattern.format(TIC=TIC))
         outputname = outputdir/NameOutput_StitchedLC
