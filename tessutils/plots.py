@@ -10,10 +10,8 @@ import matplotlib.pyplot as plt
 import peakutils
 import matplotlib as mpl
 # Local modules
-# import utils
-import tessutils.utils as utils
-# from reduction import normalize_lightCurve
-from tessutils.reduction import normalize_lightCurve, norm_and_bin_lc
+from . import utils
+from .reduction import normalize_lightCurve, norm_and_bin_lc
 
 def scalesymbols(mags,
                  min_mag,
@@ -943,5 +941,5 @@ def plot_diagnosis(sectorInfo,
     if verbose:
         print(f"Saving PDF as {pdfname}.")
     figure.savefig(pdfname, bbox_inches='tight', dpi=300)
-    plt.close()
+    plt.close(figure)
     return
