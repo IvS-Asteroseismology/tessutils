@@ -151,6 +151,11 @@ def download_tpf(TIC,
             sectors = [sectors]
         ind =[True if sec in sectors else False for sec in secs.astype('int32')]
         tesscuts = tesscuts[ind]
+
+        if len(tesscuts) == 0:
+            print(f'No images found for TIC={TIC} in these Sectors.')
+            return
+
     # Get sector numbers again
     try:
         secs = np.array([ re.match('TESS Sector (\d+)', text).group(1) for text in tesscuts.table['observation'] ])
@@ -675,12 +680,13 @@ def contamination(info,
                 getattr(model,f'x_stddev_{i}').tied = False
                 getattr(model,f'amplitude_{i}').tied = False
     # Add a 2D plane to the model
-    median_background_flux = np.median(image[mask_background])
+    median_background_flux = np.nanmedian(image[mask_background])
     model += Planar2D(slope_x=0, slope_y=0, intercept=median_background_flux)
     # Make the fit
     (xsize,ysize) = image.shape
     y, x = np.mgrid[:xsize, :ysize]
     fitter = fitting.LevMarLSQFitter()
+    image = np.nan_to_num(image)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         try:
@@ -712,10 +718,14 @@ def contamination(info,
     except TypeError:
         fraction_bkg_change = np.abs(bkg_change/Plane(xsize/2,ysize/2))
     # Find the flux contribution of neighbor stars/target star/background to the aperture mask
-    neighbour_flux = np.sum( (Fit(x,y)-TargetStar(x,y)-Plane(x,y))[mask_aperture] )
-    target_flux = np.sum( TargetStar(x,y)[mask_aperture] )
+    neighbour_flux = (Fit(x,y)-TargetStar(x,y)-Plane(x,y))
+    neighbour_flux_sum = np.sum(neighbour_flux[mask_aperture])
+    target_flux = TargetStar(x,y)
+    target_flux_sum = np.sum(target_flux[mask_aperture])
     bkg_flux = np.sum( Plane(x,y)[mask_aperture] )
     fraction_ap_contamination = neighbour_flux/target_flux
+    fraction_ap_contamination = np.nan_to_num(fraction_ap_contamination, posinf=0, neginf=0, nan=0)
+    fraction_ap_contamination_total = neighbour_flux_sum/target_flux_sum
     # In order to pickle, remove functions references in tie attribute of the fit components
     TargetStar.y_stddev.tied = None
     if nGaussians > 2:
@@ -739,19 +749,33 @@ def contamination(info,
     info.fit.Neighbours = Neighbours # Function
     info.fit.xPixel = x # Pixel coordinates
     info.fit.yPixel = y # Pixel coordinates
-    info.fit.neighbour_flux_ap = neighbour_flux
-    info.fit.target_flux_ap = target_flux
+    info.fit.neighbour_flux_ap = neighbour_flux_sum
+    info.fit.target_flux_ap = target_flux_sum
     info.fit.bkg_flux_ap = bkg_flux
-    info.fit.fraction_contamination_ap = fraction_ap_contamination
+    info.fit.fraction_contamination_ap = fraction_ap_contamination_total
+    info.fit.fraction_contamination_ap_pixel = fraction_ap_contamination
     info.fit.fraction_bkg_change = fraction_bkg_change
     return fitted_image, err_msg
+
+
+def aperture_with_neighbour(results, overlap, fraction=0.05, id_msg=None):
+    fitted_image, err_msg = contamination(results, prepend_err_msg=id_msg)
+
+    remain_overlap = []
+    for o in overlap:
+        if results.fit.fraction_contamination_ap_pixel[int(o[0])][int(o[1])] > fraction:
+            remain_overlap.append(o)
+
+    return np.array(remain_overlap)
+
 
 def refine_aperture(info,
                     wcs,
                     prepend_err_msg='',
                     thresholds=iter([7.5, 10, 15, 20, 30, 40, 50]),
                     arcsec_per_pixel=21*u.arcsec, # TESS CCD,
-                    delta_mag=4):
+                    delta_mag=4,
+                    contamination_level=0.01):
     """
     Purpose:
         Find an aperture mask that only contains one source and only
@@ -861,6 +885,18 @@ def refine_aperture(info,
             if overlaps.sum() == 0:
                 break
             else:
+                remaining_overlap = aperture_with_neighbour(info, nb_coords_pixel_binned, id_msg=prepend_err_msg, fraction=contamination_level)
+                if remaining_overlap.sum() > 0:
+                    for r in remaining_overlap:
+                        info.masks.aperture[int(r[0])][int(r[1])] = False
+                    if np.sum(aperture.astype(int)) == 0:
+                        # If no aperture left, set the aperture to `None`
+                        err_msg = utils.print_err('Not isolated target star.', prepend=prepend_err_msg)
+                        info.masks.aperture = None
+                        return None, err_msg
+                    break
+                if remaining_overlap == 0:
+                    break
                 try:
                     # Make a new aperture mask
                     threshold = next(thresholds)
@@ -962,6 +998,7 @@ def exclude_intervals(tpf,
         # Store to info
         info.excluded_intervals = None
     return tpf
+
 
 def find_number_of_PCs(info,
                        regressors,
@@ -1089,7 +1126,9 @@ def extract_light_curve(fitsFile,
                         pc_threshold_variance=1e-4,
                         sigma_clipping=5,
                         aperture_mask_min_pixels=4,
-                        aperture_mask_max_elongation=14):
+                        aperture_mask_max_elongation=14,
+                        contamination_level=0.01,
+                        save_neighbours=False):
     """
     Purpose:
         Extract light curve from a TESS Target Pixel File (TPF).
@@ -1344,11 +1383,13 @@ def extract_light_curve(fitsFile,
                                                             pc_threshold_variance=pc_threshold_variance,
                                                             sigma_clipping=sigma_clipping,
                                                             aperture_mask_min_pixels=aperture_mask_min_pixels,
-                                                            aperture_mask_max_elongation=aperture_mask_max_elongation)
+                                                            aperture_mask_max_elongation=aperture_mask_max_elongation,
+                                                            contamination_level=contamination_level,
+                                                            save_neighbours=save_neighbours)
         # Use a simple for loop (to avoid multiprocessing issues)
         if ncores==1:
-            for fitsfile in fitsFile:
-                _extract_light_curve(fitsfile)
+            for i, fitsfile in enumerate(fitsFile):
+                    _extract_light_curve(fitsfile)
         else:
             # Pool for parallel processing
             with Pool(ncores) as pool:
@@ -1449,7 +1490,14 @@ def extract_light_curve(fitsFile,
                                                       prepend_err_msg=id_msg,
                                                       delta_mag=delta_mag,
                                                       arcsec_per_pixel=arcsec_per_pixel,
-                                                      thresholds=aperture_mask_increasing_thresholds)
+                                                      thresholds=aperture_mask_increasing_thresholds,
+                                                      contamination_level=contamination_level)
+    # check aperture again
+    if results.masks.aperture is not None:
+        OK_ap_mask, err_msg = check_aperture_mask(results.masks.aperture,
+                                                  prepend_err_msg=id_msg,
+                                                  aperture_mask_min_pixels=aperture_mask_min_pixels,
+                                                  aperture_mask_max_elongation=aperture_mask_max_elongation)
     # If not satisfactory aperture mask
     if results.masks.aperture is None:
         # Save results

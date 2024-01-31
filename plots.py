@@ -5,7 +5,7 @@ from pathlib import Path
 # External modules
 import numpy as np
 import pandas as pd
-import lightkurve as lk 
+import lightkurve as lk
 import matplotlib.pyplot as plt
 import peakutils
 import matplotlib as mpl
@@ -13,19 +13,19 @@ import matplotlib as mpl
 # import utils
 import tessutils.utils as utils
 # from reduction import normalize_lightCurve
-from tessutils.reduction import normalize_lightCurve
+from tessutils.reduction import normalize_lightCurve, norm_and_bin_lc
 
 def scalesymbols(mags,
                  min_mag,
                  max_mag,
                  scale=120):
     """
-        Author: 
+        Author:
             Timothy
-    
+
         Purpose:
             A simple routine to determine the scatter marker sizes, based on the TESS magnitudes
-        
+
         Parameters:
             mags (numpy array of floats): the TESS magnitudes of the stars
             min_mag (float): the smallest magnitude to be considered for the scaling
@@ -43,9 +43,9 @@ def overplot_mask(ax,
                   lw=1.5,
                   alpha=1):
     """
-        Author: 
+        Author:
             Timothy
-    
+
         Purpose:
             (Over)plotting the mask (on a selected frame in the axis "ax").
     """
@@ -121,10 +121,10 @@ def plot_periodogram(ax,
         xmax = x[mask][ind].max()
         xmax_minus_xmin = xmax - xmin
         xmax_plus_xmin = xmax + xmin
-        xmax_new = 0.5*( scale_factor*xmax_minus_xmin + xmax_plus_xmin) 
+        xmax_new = 0.5*( scale_factor*xmax_minus_xmin + xmax_plus_xmin)
         xmin_new = xmax_plus_xmin - xmax_new
     else:
-        xmin_new = 0 
+        xmin_new = 0
         xmax_new = 20
     ax.set_xlim(xmin_new,xmax_new)
     ax.set_ylim(bottom=0)
@@ -144,7 +144,7 @@ def overplot_sector_intervals(ax,
             integers indicating the TESS sectors, and the values are lists of
             tuples, each tuple containing an initial and final time to exclude.
             Times must be given as a astropy.time.Time types.
-            
+
     Returns:
         None
     """
@@ -342,7 +342,7 @@ def plot_sector(sectorInfo,
                     2D boolean array indicating the background mask.
                 TitleFontSize (float):
                     Title font size.
-                    
+
             Returns:
                 None
             """
@@ -354,7 +354,7 @@ def plot_sector(sectorInfo,
             ax.set_title('Masks',size=TitleFontSize, pad=2)
             ax.axes.get_yaxis().set_visible(False)
             ax.axes.get_xaxis().set_visible(False)
-            
+
         def plot_neighbourhood(ax,
                                image,
                                target,
@@ -432,7 +432,7 @@ def plot_sector(sectorInfo,
         image = info.median_image
         plot_median_image(ax1, image, TitleFontSize)
 
-        # Stop here if no aperture mask is available nor neighbor stars used       
+        # Stop here if no aperture mask is available nor neighbor stars used
         if info.masks.aperture is None and info.neighbours_used is None:
             return False
 
@@ -441,12 +441,12 @@ def plot_sector(sectorInfo,
             aperture_mask = info.masks.aperture.astype(bool)
             backgroung_mask  = info.masks.background.astype(bool)
             ax2 = fig.add_subplot(main2Rows2Cols[1,0])
-            plot_masks(ax2,image,aperture_mask,backgroung_mask,TitleFontSize)    
-                        
-        # Stop here if no neighbor stars used       
+            plot_masks(ax2,image,aperture_mask,backgroung_mask,TitleFontSize)
+
+        # Stop here if no neighbor stars used
         if info.neighbours_used is None:
             return False
-        
+
         # Plot neighbour stars
         mag_reference = [10, 12, 14]
         ax3 = fig.add_subplot(main2Rows2Cols[1,1])
@@ -455,7 +455,7 @@ def plot_sector(sectorInfo,
         # Stop here if no fit is available
         if info.fit is None:
             return False
-        
+
         # Plot fit
         ax4 = fig.add_subplot(main2Rows2Cols[0,1])
         image = info.fit.fitted_image
@@ -534,6 +534,9 @@ def plot_sector(sectorInfo,
             """
             label = 'Centroid'
             color = 'r'
+            if centroids is None:
+                print("Cannot plot centriod.")
+                return
             centroid = centroids.sqrt_col2_row2
             time = centroids.time
             if separate_intervals:
@@ -652,7 +655,7 @@ def plot_sector(sectorInfo,
                 flux = lc.flux.value
                 time = lc.time.value
                 ax.plot(time, flux, color=color, rasterized=rasterized, label=label)
-            
+
             # Set ylabel
             ylabel = lc.flux.unit.to_string()
             if 'electron' in ylabel:
@@ -711,7 +714,7 @@ def plot_sector(sectorInfo,
             return False
 
         plot_raw_light_curve_and_trend(ax1,info.lc_raw1,info.lc_trend)
-        
+
         plot_detrended_light_curve(ax2,info.lc_regressed_clean)
 
         return True
@@ -729,7 +732,7 @@ def plot_sector(sectorInfo,
         Args:
             ax (matplotlib.axes.Axes):
                 Axes to plot on.
-            info: 
+            info:
                 SimpleNamespace object with the following attributes:
                     * info.pca_used
                     * info.lc_regressed
@@ -753,7 +756,7 @@ def plot_sector(sectorInfo,
         colors = [*colors,*colors]
 
         # Number of used principal components minus the constant one
-        n = info.pca_used.npc 
+        n = info.pca_used.npc
         time = info.lc_regressed.lc.time.value
         # Iterate over the no constant principal components
         for i,pc in enumerate(info.pca_used.pc[:-1]):
@@ -851,7 +854,8 @@ def plot_sector(sectorInfo,
 def plot_diagnosis(sectorInfo,
                    verbose=True,
                    pdfname=None,
-                   pg_snr=4):
+                   pg_snr=4,
+                   binlc=False):
     """
     Purpose:
         Generate a PDF file with the diagnosis plots obtained from the output of
@@ -862,7 +866,7 @@ def plot_diagnosis(sectorInfo,
             The output of `extract_light_curve` or `group_lcs`. If str or
             pathlib.Path, it must be the path to the pickle output file. If a
             SimpleNamespace, it must be the direct output of `extract_light_curve`,
-            i.e. the content of the pickle file. If a list of SimpleNamespace, 
+            i.e. the content of the pickle file. If a list of SimpleNamespace,
             it must be the direct output of `group_lcs`, i.e. the content of the
             pickle file.
         verbose (bool, optional):
@@ -920,7 +924,11 @@ def plot_diagnosis(sectorInfo,
         if verbose:
             print(f"Generating plot of stitched light curve and periodogram.")
         # Sticht the light curve
-        lc = lk.LightCurveCollection(lcs).stitch(corrector_func=normalize_lightCurve)        
+            if binlc:
+                corfunc = norm_and_bin_lc
+            else:
+                corfunc = normalize_lightCurve
+        lc = lk.LightCurveCollection(lcs).stitch(corrector_func=corfunc)
         # Make it ppt
         lc *= 1000
         # Plot the stitched light curve
@@ -935,4 +943,5 @@ def plot_diagnosis(sectorInfo,
     if verbose:
         print(f"Saving PDF as {pdfname}.")
     figure.savefig(pdfname, bbox_inches='tight', dpi=300)
+    plt.close()
     return
