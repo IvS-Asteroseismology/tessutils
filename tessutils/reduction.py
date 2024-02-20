@@ -689,7 +689,7 @@ def contamination(info,
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         try:
-            Fit = fitter(model,x,y, image)
+            Fit = fitter(model,x[mask_background],y[mask_background], image[mask_background])
         except RecursionError as e:
             err_msg = utils.print_err(str(e), prepend=prepend_err_msg)
             return None, err_msg
@@ -811,6 +811,9 @@ def refine_aperture(info,
             Magnitude difference between the target and the neighbours, ie,
             number of magnitudes dimmer than the target up to which neighbour
             stars will be considered. Defaults to 4.
+        contamination_level (float, optional):
+            Estimated flux level at which the neighbouring star is considered to
+            be contaminating
 
     Returns:
         aperture (numpy.ndarray):
