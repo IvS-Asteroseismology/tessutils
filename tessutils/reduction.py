@@ -107,7 +107,7 @@ def download_tpf(TIC,
     utils.contains_TIC_and_sector(pattern)
     outputdir = Path('tpfs') if outputdir is None else Path(outputdir)
     if not outputdir.exists():
-        outputdir.mkdir(parents=True)
+        outputdir.mkdir(parents=True, exist_ok=True)
 
     # Search MAST for all FFIs available for TIC
     tries = 1
@@ -1408,7 +1408,7 @@ def extract_light_curve(fitsFile,
         print(f'Working on {fitsFile.name}')
     # Check i/o directories and files
     if not (outputdir := Path(outputdir)).exists():
-        outputdir.mkdir(parents=True)
+        outputdir.mkdir(parents=True, exist_ok=True)
     outputname = Path(fitsFile).stem+'_corrected.pickle'
     output = outputdir/outputname
     # Check if output file already exists
@@ -1652,7 +1652,7 @@ def group_lcs(inputdir,
     if not (inputdir := Path(inputdir)).exists():
         raise ValueError(f'Input directory {inputdir} does not exist.')
     if not (outputdir := Path(outputdir)).exists():
-        outputdir.mkdir()
+        outputdir.mkdir(exist_ok=True)
     # Get the filepaths and filenames of the files to process
     utils.contains_TIC_and_sector(namePattern)
     globPattern = namePattern.replace('{TIC}', '*').replace('{SECTOR}', '*')
@@ -1761,7 +1761,7 @@ def stitch_group(inputdir,
     if not (inputdir := Path(inputdir)).exists():
         raise ValueError(f'Input directory {inputdir} does not exist.')
     if not (outputdir := Path(outputdir)).exists():
-        outputdir.mkdir()
+        outputdir.mkdir(exist_ok=True)
     # Get the filepaths and filenames of the files to process
     utils.contains_TIC(namePattern)
     globPattern = namePattern.replace('{TIC}', '*')
