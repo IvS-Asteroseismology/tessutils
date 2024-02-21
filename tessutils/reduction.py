@@ -628,6 +628,11 @@ def contamination(info,
     err_msg = ''
     # Set a maximum of 40 neighbour stars to fit
     if nb_tmags.size > 0:
+        # sort by tmag to get most important contributions in crowded fields
+        nb_order = np.argsort(nb_tmags)
+        nb_tmags = nb_tmags[nb_order]
+        nb_coords_pixel = nb_coords_pixel[nb_order]
+
         nb_tmags = nb_tmags[:max_num_of_neighbour_stars]
         nb_coords_pixel = nb_coords_pixel[:max_num_of_neighbour_stars,:]
     # Gaussian locations
@@ -725,6 +730,7 @@ def contamination(info,
     fraction_ap_contamination = neighbour_flux/target_flux
     fraction_ap_contamination = np.nan_to_num(fraction_ap_contamination, posinf=0, neginf=0, nan=0)
     fraction_ap_contamination_total = neighbour_flux_sum/target_flux_sum
+
     # In order to pickle, remove functions references in tie attribute of the fit components
     TargetStar.y_stddev.tied = None
     if nGaussians > 2:
@@ -851,6 +857,8 @@ def refine_aperture(info,
     info.neighbours_all.dec = np.array([coord.dec.deg for coord in nb_coords])
     # Filter neighbour stars: Remove too faint stars
     nb_faintest_mag = target_tmag + delta_mag
+    if nb_faintest_mag > 17:  # but cut at T=17
+        nb_faintest_mag = 17.
     mask = nb_tmags <= nb_faintest_mag
     nb_tmags =  nb_tmags[mask]
     nb_coords = nb_coords[mask]
@@ -887,17 +895,21 @@ def refine_aperture(info,
             if overlaps.sum() == 0:
                 break
             else:
-                remaining_overlap = aperture_with_neighbour(info, nb_coords_pixel_binned, id_msg=prepend_err_msg, fraction=contamination_level)
+                overlap_x = nb_coords_pixel_binned[:,1][overlaps.astype(bool)]
+                overlap_y = nb_coords_pixel_binned[:,0][overlaps.astype(bool)]
+
+                remaining_overlap = aperture_with_neighbour(info, np.array([overlap_x, overlap_y]).T, id_msg=prepend_err_msg, fraction=contamination_level)
                 if remaining_overlap.sum() > 0:
                     for r in remaining_overlap:
-                        info.masks.aperture[int(r[0])][int(r[1])] = False
+                        aperture[int(r[0])][int(r[1])] = False
+                        info.masks.aperture = aperture
                     if np.sum(aperture.astype(int)) == 0:
                         # If no aperture left, set the aperture to `None`
                         err_msg = utils.print_err('Not isolated target star.', prepend=prepend_err_msg)
                         info.masks.aperture = None
                         return None, err_msg
                     break
-                if remaining_overlap == 0:
+                if remaining_overlap.sum() == 0:
                     break
                 try:
                     # Make a new aperture mask
@@ -923,7 +935,10 @@ def refine_aperture(info,
     # Make target pixel coordenate match the image grid, ie, bin it
     target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)
     # Find if a target is within the aperture mask
-    overlaps = ndimage.map_coordinates(aperture.astype(int), [target_coords_pixel_binned[:,1], target_coords_pixel_binned[:,0]], order=0)
+    overlaps = ndimage.map_coordinates(aperture.astype(int),
+                                       [np.array([-1,0,1]) + target_coords_pixel_binned[:,1],
+                                        np.array([-1,0,1]) + target_coords_pixel_binned[:,0]],
+                                       order=0)
     if overlaps.sum() == 0:
         err_msg = utils.print_err('Target star not within the mask.', prepend=prepend_err_msg)
         print(err_msg)
