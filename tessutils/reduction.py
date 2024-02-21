@@ -925,19 +925,26 @@ def refine_aperture(info,
                     err_msg = utils.print_err('Not isolated target star.', prepend=prepend_err_msg)
                     info.masks.aperture = None
                     return None, err_msg
+
+    # The code below breaks in crowded fields, it might also add pixel back in
+    # that we just removed from the aperture
+    # remove it for now until we find a good solution
     # Store to info
-    info.aperture_threshold = threshold
+    # info.aperture_threshold = threshold
     # Find the brightest pixel within the mask
-    ap_image = np.ma.masked_where(~aperture, image)
-    seeds = np.argwhere(ap_image==ap_image.max())
+    # ap_image = np.ma.masked_where(~aperture, image)
+    # seeds = np.argwhere(ap_image==ap_image.max())
     # Ensure the mask contains only pixels with decreasing flux w.r.t. the brightest pixel
-    aperture = find_fainter_adjacent_pixels(seeds,ap_image)
+    # aperture = find_fainter_adjacent_pixels(seeds,ap_image)
     # Make target pixel coordenate match the image grid, ie, bin it
-    target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)
-    # Find if a target is within the aperture mask
+    target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0]
+
+    aperture = check_continous(aperture, target_coord_pixel[0])
+
+    # Find if a target is within/near the aperture mask
     overlaps = ndimage.map_coordinates(aperture.astype(int),
-                                       [np.array([-1,0,1]) + target_coords_pixel_binned[:,1],
-                                        np.array([-1,0,1]) + target_coords_pixel_binned[:,0]],
+                                       [np.array([-1,0,1]) + target_coords_pixel_binned[1],
+                                        np.array([-1,0,1]) + target_coords_pixel_binned[0]],
                                        order=0)
     if overlaps.sum() == 0:
         err_msg = utils.print_err('Target star not within the mask.', prepend=prepend_err_msg)
@@ -947,6 +954,37 @@ def refine_aperture(info,
     # Store to info
     info.masks.aperture = aperture
     return aperture, err_msg
+
+
+def check_continous(aperture, target_pixel_coord):
+    '''
+    Purpose:
+        Check if the aperture mask is continuous and remove any regions that are
+        not attached to the region closest to the target star.
+
+    Args:
+        aperture (numpy.array):
+            The current aperture.
+        target_pixel_coord (numpy.array):
+            Position of the target star in pixel space (dimension (2,)).
+
+    Returns:
+        aperture (numpy.ndarray):
+            New aperture mask.
+    '''
+    # Return only the contiguous region closest to `region`.
+    # First, label all the regions:
+    labels = ndimage.label(aperture)[0]
+    # For all pixels above threshold, compute distance to reference pixel:
+    label_args = np.argwhere(labels > 0)
+
+    distances = [np.hypot(crd[0], crd[1])
+                 for crd in label_args - target_pixel_coord]
+    # Which label corresponds to the closest pixel?
+    closest_arg = label_args[np.argmin(distances)]
+    closest_label = labels[closest_arg[0], closest_arg[1]]
+    return labels == closest_label
+
 
 def exclude_intervals(tpf,
                       info,
