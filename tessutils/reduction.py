@@ -134,16 +134,16 @@ def download_tpf(TIC,
         print('No FITS files saved')
         return
     # Check that the returned ID matches the TIC number
-    if str(TIC) != re.match('TIC (\d+)',ids.item()).group(1):
+    if str(TIC) != re.match(r'TIC (\d+)', ids.item()).group(1):
         print(f'The MAST query returned a different id: {ids}')
         print('No FITS files saved')
         return
 
     # Get sector numbers
     try:
-        secs = np.array([ re.match('TESS Sector (\d+)', text).group(1) for text in tesscuts.table['observation'] ])
+        secs = np.array([ re.match(r'TESS Sector (\d+)', text).group(1) for text in tesscuts.table['observation'] ])
     except KeyError:
-        secs = np.array([ re.match('TESS Sector (\d+)', text).group(1) for text in tesscuts.table['mission'] ])
+        secs = np.array([ re.match(r'TESS Sector (\d+)', text).group(1) for text in tesscuts.table['mission'] ])
     # Filter only requested sectors
     if not sectors is None:
         if isinstance(sectors, int):
@@ -157,9 +157,9 @@ def download_tpf(TIC,
 
     # Get sector numbers again
     try:
-        secs = np.array([ re.match('TESS Sector (\d+)', text).group(1) for text in tesscuts.table['observation'] ])
+        secs = np.array([ re.match(r'TESS Sector (\d+)', text).group(1) for text in tesscuts.table['observation'] ])
     except KeyError:
-        secs = np.array([ re.match('TESS Sector (\d+)', text).group(1) for text in tesscuts.table['mission'] ])
+        secs = np.array([ re.match(r'TESS Sector (\d+)', text).group(1) for text in tesscuts.table['mission'] ])
     secs = secs.astype('int32')
 
     # Generate output names

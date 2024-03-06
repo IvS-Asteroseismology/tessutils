@@ -41,18 +41,18 @@ def return_TIC_and_sector(name, pattern=None):
     contains_two_numbers(name)
     contains_TIC_and_sector(pattern)
     # Substitute the keywords for regular expressions
-    _pattern = pattern.format(TIC='(\d+)', SECTOR='\d+')
+    _pattern = pattern.format(TIC=r'(\d+)', SECTOR=r'\d+')
     if (match := re.match(_pattern,name)):
         TIC = int(match.group(1))
     else:
         raise ValueError(f'`name` ({name}) does not match `pattern` ({pattern}).')
     # Substitute the keywords for regular expressions
-    _pattern = pattern.format(TIC='\d+', SECTOR='(\d+)')
+    _pattern = pattern.format(TIC=r'\d+', SECTOR=r'(\d+)')
     if (match := re.match(_pattern,name)):
         sector = int(match.group(1))
     else:
         raise ValueError(f'`name` ({name}) does not match `pattern` ({pattern}).')
-    return TIC, sector 
+    return TIC, sector
 
 def return_sector(*args, **kwargs):
     """Return sector number from str containing keywords {TIC} and {SECTOR}"""
@@ -68,7 +68,7 @@ def return_TIC_2(name, pattern=None):
     contain_one_number(name)
     contains_TIC(pattern)
     # Substitute the keywords for regular expressions
-    _pattern = pattern.format(TIC='(\d+)')
+    _pattern = pattern.format(TIC=r'(\d+)')
     if (match := re.match(_pattern,name)):
         TIC = int(match.group(1))
     else:
@@ -79,7 +79,7 @@ def chunks(lst, n):
     """
     Source
         https://stackoverflow.com/questions/312443/how-do-you-split-a-list-into-evenly-sized-chunks
-    
+
     Purpose
         Yield successive n-sized chunks from lst.
     """
