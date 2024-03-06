@@ -27,12 +27,12 @@ def contains_TIC(pattern):
 
 def contains_two_numbers(name):
     """Ensure that `name` contains two distinct numbers"""
-    if not re.match('.*?(\d+)[^0-9]+(\d+).*?',name):
+    if not re.match(r'.*?(\d+)[^0-9]+(\d+).*?',name):
         raise ValueError('`name` must contain two numbers separated by a non-number.')
 
 def contain_one_number(name):
     """Ensure that `name` contains one number"""
-    if not re.match('.*?(\d+).*?',name):
+    if not re.match(r'.*?(\d+).*?',name):
         raise ValueError('`name` must contain one number.')
 
 def return_TIC_and_sector(name, pattern=None):
