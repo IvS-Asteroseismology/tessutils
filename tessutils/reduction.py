@@ -1770,7 +1770,8 @@ def stitch_group(inputdir,
                  ncores=1,
                  overwrite=False,
                  binlc=False,
-                 time_bin_size=30 * u.min):
+                 time_bin_size=30 * u.min,
+                 sectors='all'):
     """
     Purpose:
         Stitch the light curves contained in the outputs from function `group_lcs`
@@ -1809,6 +1810,8 @@ def stitch_group(inputdir,
             parameter time_bin_size.
         time_bin_size (astropy quantity of dimension time):
             Bin size in time, default value is 30min
+        sectors (list[int], optional):
+            Sectors to consider for the stitched LC. Defaults to 'all'.
 
     Returns:
         None
@@ -1845,7 +1848,10 @@ def stitch_group(inputdir,
         with open(file, 'rb') as picklefile:
             all_sectors = pickle.load(picklefile)
         # Read the results
-        lcs = [sector.lc_regressed_clean for sector in all_sectors if sector.tag == 'OK']
+        if sectors == 'all':
+            lcs = [sector.lc_regressed_clean for sector in all_sectors if sector.tag == 'OK']
+        else:
+            lcs = [sector.lc_regressed_clean for sector in all_sectors if ((sector.tag == 'OK') & (sector.sector in sectors))]
         # If no OK sectors
         if len(lcs) == 0:
             return None
