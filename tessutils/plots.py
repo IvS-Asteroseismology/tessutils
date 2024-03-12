@@ -390,7 +390,7 @@ def plot_sector(sectorInfo,
             ax.imshow(np.log10(image), origin='lower', cmap = plt.cm.YlGnBu_r)
             ax.set_title('Neighbours',size=TitleFontSize, pad=2)
             sizes = scalesymbols(target.mag,np.amin(mags), np.amax(mags), scale=15.)
-            ax.scatter(target.pix[:,0],target.pix[:,1],s=sizes,c='r',edgecolors='k', linewidth=0.2, zorder=5, label=f'{target.mag:.1f}')
+            ax.scatter(target.pix[:,0],target.pix[:,1],s=sizes,c='r',edgecolors='k', linewidth=0.2, zorder=6, label=f'{target.mag:.1f}')
             if neighbours.pix.size > 0:
                 sizes = scalesymbols(neighbours.mag,np.amin(mags), np.amax(mags), scale=15.)
                 ax.scatter(neighbours.pix[:,0],neighbours.pix[:,1],s=sizes,c='w',edgecolors='k', linewidth=0.2, zorder=5)
