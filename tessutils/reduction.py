@@ -458,7 +458,7 @@ def check_aperture_mask(aperture,
     aperture = aperture.astype(int)
     # If not apperture found
     if not np.any(aperture) and OK_aperture:
-        err_msg = utils.print_err('Not aperture found.', prepend=prepend_err_msg)
+        err_msg = utils.print_err('No aperture found.', prepend=prepend_err_msg)
         OK_aperture = False
     # If too elongated aperture (column)
     if not np.all(aperture.sum(axis=0) <= aperture_mask_max_elongation) and OK_aperture:
@@ -1615,7 +1615,7 @@ def extract_light_curve(fitsFile,
                                      threshold_variance=pc_threshold_variance)
     if npc == 0:
         # Save results
-        results.tag = id_msg+'None PC used, no detrended done.'
+        results.tag = id_msg+'No PC used, no detrending done.'
         with open(output,'wb') as picklefile:
             pickle.dump(results,picklefile)
         if return_msg:
@@ -1657,7 +1657,7 @@ def extract_light_curve(fitsFile,
         return
 
 def group_lcs(inputdir,
-              outputdir='groupped',
+              outputdir='grouped',
               namePattern = 'tic{TIC}_sec{SECTOR}_corrected.pickle',
               outputname_pattern = 'tic{TIC}_allsectors_corrected.pickle',
               TICs='all',
