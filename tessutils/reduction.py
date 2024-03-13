@@ -774,11 +774,119 @@ def aperture_with_neighbour(results, overlap, fraction=0.05, id_msg=None):
     return np.array(remain_overlap)
 
 
+def get_neighbours(info, wcs,
+                   arcsec_per_pixel=21*u.arcsec,  # TESS CCD
+                   delta_mag=4,
+                   prepend_err_msg=''):
+    '''
+    Get information on neighbouring stars. Query TIC at MAST.
+
+    Parameters
+    ----------
+    info : SimpleNamespace object with the following attributes:
+            * info.median_image
+            * info.ra
+            * info.dec
+            * info.tic
+        to which will be added:
+            * info.target
+            * info.neighbours_all
+            * info.neighbours_used
+    wcs : astropy.wcs.WCS
+        World Coordinate System.
+    arcsec_per_pixel : astropy.units.quantity.Quantity, optional
+        The pixel scale. The default is 21*u.arcsec for TESS.
+    delta_mag : float, optional
+        Maximum magnitude difference between neighbours and target.
+        (Neighbours being fainter)
+        The default is 4.
+    prepend_err_msg : str, optional
+        String to prepend to the error message. Default is ''.
+
+    Returns
+    -------
+    All information is also added to the info object but with a return value we
+    do not have to retrieve these information again in the following step.
+    nb_coords : np.array (float)
+        coordinates of the neighbours.
+    nb_coords_pixel : np.array (float)
+        pixel coordinates of the neighbours.
+    target_coord : astropy.SkyCoord
+        target coordinate
+    target_coord_pixel : np.array (float)
+        target position in pixel coordinates
+    '''
+    # Unpack information
+    tic = info.tic
+
+    # Initialization
+    err_msg = ''
+    # Query surrounding area in MAST
+    xdim = info.median_image.shape[0]
+    search_radius_pixel = xdim / np.sqrt(2)  # sqrt(2) * xdim / 2
+    search_radius = search_radius_pixel * arcsec_per_pixel
+    target_coord = SkyCoord(info.ra, info.dec, unit="deg")
+    query_results = query_TIC(f'TIC {tic}', target_coord,
+                              search_radius=search_radius, tic_id=tic)
+    tic_tmp, tess_coord, target_tmag, nb_coords, nb_tmags = query_results
+    # Check we retrieve the correct target
+    if tic != tic_tmp:
+        msg = 'The TIC number from the MAST query does not match the TESS FITS image.'
+        err_msg = utils.print_err(msg, prepend=prepend_err_msg)
+        print(err_msg)
+        return None, err_msg
+    # Make neighbor coordenates into NumPy arrays
+    nb_coords = np.array(nb_coords)
+    # Store to info (get plain numbers from the AstroPy instance)
+    info.neighbours_all = SimpleNamespace()
+    info.neighbours_all.mag = nb_tmags
+    info.neighbours_all.ra = np.array([coord.ra.deg for coord in nb_coords])
+    info.neighbours_all.dec = np.array([coord.dec.deg for coord in nb_coords])
+    # Filter neighbour stars: Remove too faint stars
+    nb_faintest_mag = target_tmag + delta_mag
+    if nb_faintest_mag > 17:  # but cut at T=17
+        nb_faintest_mag = 17.
+    mask = nb_tmags <= nb_faintest_mag
+    nb_tmags = nb_tmags[mask]
+    nb_coords = nb_coords[mask]
+    # Convert coordenates to pixels
+    target_coord_pixel = np.array([target_coord.to_pixel(wcs, origin=0)])
+    # Store to info (get plain numbers from the AstroPy instance)
+    info.target = SimpleNamespace()
+    info.target.mag = target_tmag
+    info.target.ra = target_coord.ra.deg
+    info.target.dec = target_coord.dec.deg
+    info.target.pix = target_coord_pixel
+    if nb_coords.size > 0:
+        nb_coords_pixel = np.array([coord.to_pixel(wcs, origin=0)
+                                    for coord in nb_coords],
+                                   dtype=float)
+        # Filter neighbour stars: Remove stars outside the image bounds
+        nb_pixel_value = ndimage.map_coordinates(info.median_image,
+                                                 [nb_coords_pixel[:, 1],
+                                                  nb_coords_pixel[:, 0]],
+                                                 order=0)
+        mask = nb_pixel_value != 0
+        nb_tmags = nb_tmags[mask]
+        nb_coords = nb_coords[mask]
+        nb_coords_pixel = nb_coords_pixel[mask, :]
+    else:
+        nb_coords_pixel = np.array([])
+    # Store to info (get plain numbers from the AstroPy instance)
+    info.neighbours_used = SimpleNamespace()
+    info.neighbours_used.mag = nb_tmags
+    info.neighbours_used.ra = np.array([coord.ra.deg for coord in nb_coords])
+    info.neighbours_used.dec = np.array([coord.dec.deg for coord in nb_coords])
+    info.neighbours_used.pix = nb_coords_pixel
+
+    return nb_coords, nb_coords_pixel, target_coord, target_coord_pixel
+
+
 def refine_aperture(info,
                     wcs,
                     prepend_err_msg='',
                     thresholds=iter([7.5, 10, 15, 20, 30, 40, 50]),
-                    arcsec_per_pixel=21*u.arcsec, # TESS CCD,
+                    arcsec_per_pixel=21*u.arcsec,  # TESS CCD,
                     delta_mag=4,
                     contamination_level=0.01):
     """
@@ -827,85 +935,42 @@ def refine_aperture(info,
         err_msg (str):
             Error message. If no error, it is an empty string.
     """
-    # Unpack information
-    tic = info.tic
-    ra = info.ra
-    dec = info.dec
+    neighbours = get_neighbours(info, wcs, arcsec_per_pixel=arcsec_per_pixel,
+                                delta_mag=delta_mag,
+                                prepend_err_msg=prepend_err_msg)
+
+    nb_coords, nb_coords_pixel, _, target_coord_pixel = neighbours
+
     aperture = info.masks.aperture
     image = info.median_image
-    threshold = info.aperture_threshold
-    # Initialization
-    err_msg = ''
-    # Query surrounding area in MAST
-    search_radius_pixel = np.sqrt(2*np.max(image.shape)**2)/2
-    search_radius = search_radius_pixel * arcsec_per_pixel
-    target_coord = SkyCoord(ra, dec, unit = "deg")
-    tic_tmp,\
-    tess_coord, target_tmag,\
-    nb_coords, nb_tmags = query_TIC(f'TIC {tic}',target_coord, search_radius=search_radius, tic_id=tic)
-    # Check we retrieve the correct target
-    if tic != tic_tmp:
-        err_msg = utils.print_err('The TIC number from the MAST query does not match the one from the TESS FITS image.', prepend=prepend_err_msg)
-        print(err_msg)
-        return None, err_msg
-    # Make neighbor coordenates into NumPy arrays
-    nb_coords = np.array(nb_coords)
-    # Store to info (get plain numbers from the AstroPy instance)
-    info.neighbours_all = SimpleNamespace()
-    info.neighbours_all.mag = nb_tmags
-    info.neighbours_all.ra = np.array([coord.ra.deg  for coord in nb_coords])
-    info.neighbours_all.dec = np.array([coord.dec.deg for coord in nb_coords])
-    # Filter neighbour stars: Remove too faint stars
-    nb_faintest_mag = target_tmag + delta_mag
-    if nb_faintest_mag > 17:  # but cut at T=17
-        nb_faintest_mag = 17.
-    mask = nb_tmags <= nb_faintest_mag
-    nb_tmags =  nb_tmags[mask]
-    nb_coords = nb_coords[mask]
-    # Convert coordenates to pixels
-    target_coord_pixel = np.array( [target_coord.to_pixel(wcs,origin=0)] )
-    # Store to info (get plain numbers from the AstroPy instance)
-    info.target = SimpleNamespace()
-    info.target.mag = target_tmag
-    info.target.ra = target_coord.ra.deg
-    info.target.dec = target_coord.dec.deg
-    info.target.pix = target_coord_pixel
-    if nb_coords.size > 0:
-        nb_coords_pixel = np.array( [coord.to_pixel(wcs,origin=0) for coord in nb_coords], dtype=float)
-        # Filter neighbour stars: Remove stars outside the image bounds
-        nb_pixel_value = ndimage.map_coordinates(image, [nb_coords_pixel[:,1], nb_coords_pixel[:,0]], order=0)
-        mask = nb_pixel_value != 0
-        nb_tmags =  nb_tmags[mask]
-        nb_coords = nb_coords[mask]
-        nb_coords_pixel = nb_coords_pixel[mask,:]
-    else:
-        nb_coords_pixel = np.array([])
-    # Store to info (get plain numbers from the AstroPy instance)
-    info.neighbours_used = SimpleNamespace()
-    info.neighbours_used.mag = nb_tmags
-    info.neighbours_used.ra = np.array([coord.ra.deg  for coord in nb_coords])
-    info.neighbours_used.dec = np.array([coord.dec.deg for coord in nb_coords])
-    info.neighbours_used.pix = nb_coords_pixel
+
     if nb_coords.size > 0:
         # Make neighbour pixels coordenates match the image grid, ie, bin them
         nb_coords_pixel_binned = np.floor(nb_coords_pixel+0.5)
         while True:
             # Find if a neighbour is within the aperture mask
-            overlaps = ndimage.map_coordinates(aperture.astype(int), [nb_coords_pixel_binned[:,1], nb_coords_pixel_binned[:,0]], order=0)
+            overlaps = ndimage.map_coordinates(aperture.astype(int),
+                                               [nb_coords_pixel_binned[:, 1],
+                                                nb_coords_pixel_binned[:, 0]],
+                                               order=0)
             if overlaps.sum() == 0:
                 break
             else:
-                overlap_x = nb_coords_pixel_binned[:,1][overlaps.astype(bool)]
-                overlap_y = nb_coords_pixel_binned[:,0][overlaps.astype(bool)]
+                overlap_x = nb_coords_pixel_binned[:, 1][overlaps.astype(bool)]
+                overlap_y = nb_coords_pixel_binned[:, 0][overlaps.astype(bool)]
 
-                remaining_overlap = aperture_with_neighbour(info, np.array([overlap_x, overlap_y]).T, id_msg=prepend_err_msg, fraction=contamination_level)
+                remaining_overlap = aperture_with_neighbour(info,
+                                                            np.array([overlap_x,overlap_y]).T,
+                                                            id_msg=prepend_err_msg,
+                                                            fraction=contamination_level)
                 if remaining_overlap.sum() > 0:
                     for r in remaining_overlap:
                         aperture[int(r[0])][int(r[1])] = False
                         info.masks.aperture = aperture
                     if np.sum(aperture.astype(int)) == 0:
                         # If no aperture left, set the aperture to `None`
-                        err_msg = utils.print_err('Not isolated target star.', prepend=prepend_err_msg)
+                        err_msg = utils.print_err('Not isolated target star.',
+                                                  prepend=prepend_err_msg)
                         info.masks.aperture = None
                         return None, err_msg
                     break
@@ -914,15 +979,18 @@ def refine_aperture(info,
                 try:
                     # Make a new aperture mask
                     threshold = next(thresholds)
-                    aperture = threshold_mask(image, threshold=threshold, reference_pixel='center')
+                    aperture = threshold_mask(image, threshold=threshold,
+                                              reference_pixel='center')
                 except StopIteration:
                     # If no more thresholds to try, set the aperture to `None`
-                    err_msg = utils.print_err('Not isolated target star.', prepend=prepend_err_msg)
+                    err_msg = utils.print_err('Not isolated target star.',
+                                              prepend=prepend_err_msg)
                     info.masks.aperture = None
                     return None, err_msg
                 if np.sum(aperture.astype(int)) == 0:
                     # If no aperture left, set the aperture to `None`
-                    err_msg = utils.print_err('Not isolated target star.', prepend=prepend_err_msg)
+                    err_msg = utils.print_err('Not isolated target star.',
+                                              prepend=prepend_err_msg)
                     info.masks.aperture = None
                     return None, err_msg
 
@@ -934,7 +1002,8 @@ def refine_aperture(info,
     # Find the brightest pixel within the mask
     # ap_image = np.ma.masked_where(~aperture, image)
     # seeds = np.argwhere(ap_image==ap_image.max())
-    # Ensure the mask contains only pixels with decreasing flux w.r.t. the brightest pixel
+    # Ensure the mask contains only pixels with decreasing flux w.r.t.
+    # the brightest pixel
     # aperture = find_fainter_adjacent_pixels(seeds,ap_image)
     # Make target pixel coordenate match the image grid, ie, bin it
     target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0]
@@ -947,7 +1016,8 @@ def refine_aperture(info,
                                         np.array([-1,0,1]) + target_coords_pixel_binned[0]],
                                        order=0)
     if overlaps.sum() == 0:
-        err_msg = utils.print_err('Target star not within the mask.', prepend=prepend_err_msg)
+        err_msg = utils.print_err('Target star not within the mask.',
+                                  prepend=prepend_err_msg)
         print(err_msg)
         info.masks.aperture = None
         return None, err_msg
