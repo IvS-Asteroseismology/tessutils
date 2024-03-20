@@ -644,7 +644,6 @@ def contamination(info,
     # Unpack some information
     image = info.median_image
     mask_aperture = info.masks.aperture
-    mask_background = info.masks.background
     target_coord_pixel = info.target.pix
     target_tmag = info.target.mag
     nb_coords_pixel = info.neighbours_used.pix
@@ -718,12 +717,12 @@ def contamination(info,
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         try:
-            Fit = fitter(model,x, y, image)
+            Fit = fitter(model,x,y,image)
         except RecursionError as e:
             err_msg = utils.print_err(str(e), prepend=prepend_err_msg)
             return None, err_msg
     # Results
-    fitted_image = Fit(x,y)
+    fitted_image = Fit(x,y) + background
     TargetStar = Fit[0]
     if nGaussians > 1:
         Neighbours = []
