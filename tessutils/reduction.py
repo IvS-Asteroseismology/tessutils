@@ -1827,7 +1827,7 @@ def group_lcs(inputdir,
     filesTable.sort_values(by=['tic','sector'], inplace=True)
     # Select the TIC number to process
     if not TICs == 'all':
-        if isinstance(TICs,int):
+        if isinstance(TICs, (int, np.integer)):
             filesTable = filesTable.query('tic == @TICs')
         elif isinstance(TICs,(list,np.ndarray)):
             filesTable = filesTable.query('tic in @TICs')
@@ -1835,7 +1835,7 @@ def group_lcs(inputdir,
             raise ValueError(f'TICs must be "all", an integer or a list of integers. Got {TICs}')
     # Select the sectors to process
     if not sectors == 'all':
-        if isinstance(sectors,int):
+        if isinstance(sectors, (int, np.integer)):
             filesTable = filesTable.query('sector == @sectors')
         elif isinstance(sectors,(list,np.ndarray)):
             filesTable = filesTable.query('sector in @sectors')
