@@ -1,5 +1,8 @@
 # Built-in modules
-import signal, warnings, pickle, re
+import signal
+import warnings
+import pickle
+import re
 from time import sleep
 from types import SimpleNamespace
 from pathlib import Path
@@ -21,6 +24,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 # Local modules
 from . import utils
+
 
 def download_tpf(TIC,
                  imsize=20,
@@ -83,19 +87,20 @@ def download_tpf(TIC,
     """
 
     # Handle a list-like input
-    valid_types = (list,np.ndarray,pd.core.series.Series)
-    if isinstance(TIC,valid_types):
+    valid_types = (list, np.ndarray, pd.core.series.Series)
+    if isinstance(TIC, valid_types):
         # Update kw arguments of the function
-        _download_tpf = partial(download_tpf, imsize=imsize,
-                                              pattern=pattern,
-                                              outputdir=outputdir,
-                                              max_queryTries=max_queryTries,
-                                              max_downloadTries=max_downloadTries,
-                                              max_saveTries=max_saveTries,
-                                              sectors=sectors,
-                                              overwrite=overwrite,
-                                              progressbar=False,
-                                              ncores=1)
+        _download_tpf = partial(download_tpf,
+                                imsize=imsize,
+                                pattern=pattern,
+                                outputdir=outputdir,
+                                max_queryTries=max_queryTries,
+                                max_downloadTries=max_downloadTries,
+                                max_saveTries=max_saveTries,
+                                sectors=sectors,
+                                overwrite=overwrite,
+                                progressbar=False,
+                                ncores=1)
         with Pool(ncores) as pool:
             it = pool.imap_unordered(_download_tpf, TIC)
             if progressbar:
@@ -117,7 +122,7 @@ def download_tpf(TIC,
             return
         try:
             tesscuts = lk.search_tesscut(f'TIC {TIC}')
-            break # Exit the loop if TIC is found
+            break  # Exit the loop if TIC is found
         except Exception as e:
             e_name = e.__class__.__name__
             print(f'MAST query attempt {tries}, TIC = {TIC}. Excepion -> {e_name}: {e}')
@@ -141,14 +146,14 @@ def download_tpf(TIC,
 
     # Get sector numbers
     try:
-        secs = np.array([ re.match(r'TESS Sector (\d+)', text).group(1) for text in tesscuts.table['observation'] ])
+        secs = np.array([re.match(r'TESS Sector (\d+)', text).group(1) for text in tesscuts.table['observation']])
     except KeyError:
-        secs = np.array([ re.match(r'TESS Sector (\d+)', text).group(1) for text in tesscuts.table['mission'] ])
+        secs = np.array([re.match(r'TESS Sector (\d+)', text).group(1) for text in tesscuts.table['mission']])
     # Filter only requested sectors
-    if not sectors is None:
+    if sectors is not None:
         if isinstance(sectors, int):
             sectors = [sectors]
-        ind =[True if sec in sectors else False for sec in secs.astype('int32')]
+        ind = [True if sec in sectors else False for sec in secs.astype('int32')]
         tesscuts = tesscuts[ind]
 
         if len(tesscuts) == 0:
@@ -157,9 +162,9 @@ def download_tpf(TIC,
 
     # Get sector numbers again
     try:
-        secs = np.array([ re.match(r'TESS Sector (\d+)', text).group(1) for text in tesscuts.table['observation'] ])
+        secs = np.array([re.match(r'TESS Sector (\d+)', text).group(1) for text in tesscuts.table['observation']])
     except KeyError:
-        secs = np.array([ re.match(r'TESS Sector (\d+)', text).group(1) for text in tesscuts.table['mission'] ])
+        secs = np.array([re.match(r'TESS Sector (\d+)', text).group(1) for text in tesscuts.table['mission']])
     secs = secs.astype('int32')
 
     # Generate output names
@@ -168,11 +173,11 @@ def download_tpf(TIC,
     if not overwrite:
         # Skip already downloaded files
         files = np.array([file.exists() for file in outputnames])
-        ind = np.argwhere(files==True).flatten()
+        ind = np.argwhere(files).flatten()
         if len(ind) > 0:
             skipped_secs = ','.join(secs[ind].astype(str))
             print(f'Skipped: Already downloaded sectors for TIC={TIC}: {skipped_secs}.')
-            ind = np.argwhere(files==False).flatten().tolist()
+            ind = np.argwhere(~files).flatten().tolist()
             tesscuts = tesscuts[ind]
             if len(tesscuts) == 0:
                 print(f'Skipped: No new images to download for TIC={TIC}.')
@@ -185,17 +190,18 @@ def download_tpf(TIC,
             print(f'Skipped TIC={TIC}: Maximum number of download retries ({max_downloadTries}) exceeded.')
             return
         try:
-            tpfs = tesscuts.download_all(cutout_size=imsize) # TODO: This may be a chance to use an async funtion or method
-            break # Exit the loop if download is successful
+            # TODO: This may be a chance to use an async funtion or method
+            tpfs = tesscuts.download_all(cutout_size=imsize)
+            break  # Exit the loop if download is successful
         except TypeError as e:
             e_name = e.__class__.__name__
-            print(f'Skipped TIC={TIC}: There seems to be a problem with the requested image. Excepion -> {e_name}: {e}.')
+            print(f'Skipped TIC={TIC}: There is a problem with the requested image. Excepion -> {e_name}: {e}.')
             return
         except Exception as e:
             # If exception rised
             e_name = e.__class__.__name__
             if e_name == 'SearchError':
-                print(f'Skipped TIC = {TIC}: There seems to be a problem with the requested image. Excepion -> {e_name}: {e}.')
+                print(f'Skipped TIC = {TIC}: There is a problem with the requested image. Excepion -> {e_name}: {e}.')
                 return
             print(f'Download try number {tries} for TIC={TIC}. Excepion -> {e_name}: {e}')
             # ? Need to add return statement here ?
@@ -206,7 +212,7 @@ def download_tpf(TIC,
         # Store TIC number in the header
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            tpf.header.set('TICID',value=TIC)
+            tpf.header.set('TICID', value=TIC)
         sector = tpf.sector
         outputname = outputdir/Path(pattern.format(TIC=TIC, SECTOR=sector))
         tries = 1
@@ -217,13 +223,13 @@ def download_tpf(TIC,
                 return
             try:
                 tpf.to_fits(outputname.as_posix(), overwrite=overwrite)
-                break # Exit the loop if save is successful
-            except OSError as e:
+                break  # Exit the loop if save is successful
+            except OSError:
                 print('When saving FITS file for TIC={TIC}. Excepion -> OSError: {e}.')
             except Exception as e:
                 e_name = e.__class__.__name__
                 print(f'Attempt {tries} when saving FITS file, TIC = {TIC}. Excepion -> {e_name}: {e}.')
-                sleep(0.5) # Allow time before next attempt
+                sleep(0.5)  # Allow time before next attempt
             tries += 1
 
         # Message for successful save
@@ -302,7 +308,7 @@ def threshold_mask(image,
     """
     if reference_pixel == 'center':
         # reference_pixel = (image.shape[2] / 2, image.shape[1] / 2) # Original line
-        reference_pixel = (image.shape[1] / 2, image.shape[0] / 2) # Modified by Stefano
+        reference_pixel = (image.shape[1] / 2, image.shape[0] / 2)  # Modified by Stefano
     vals = image[np.isfinite(image)].flatten()
     # Calculate the theshold value in flux units
     mad_cut = (1.4826 * MAD(vals) * threshold) + np.nanmedian(image)
@@ -324,99 +330,100 @@ def threshold_mask(image,
         closest_label = labels[closest_arg[0], closest_arg[1]]
         return labels == closest_label
 
+
 def query_TIC(target,
               target_coord,
               tic_id=None,
               search_radius=600.*u.arcsec,
               **kwargs):
-        """
-        Retrieving information from the TESS input catalog.
+    """
+    Retrieving information from the TESS input catalog.
 
-        Source
-        ----------
-        Courtesy of Dr. Timothy Van Reeth
+    Source
+    ----------
+    Courtesy of Dr. Timothy Van Reeth
 
-        Notes
-        ----------
-        I (Stefano) modified the behaviour when `tic_id` is given.
+    Notes
+    ----------
+    I (Stefano) modified the behaviour when `tic_id` is given.
 
 
-        Parameters
-        ----------
-        target:
-            Target name
-        target_coord (optional):
-            Target coordinates (astropy Skycoord)
-        search_radius:
-            TIC entries around the target coordinaes wihtin this radius are considered.
-        **kwargs:
-            dict to be passed to astroquery.Catalogs.query_object or query_region.
-        """
+    Parameters
+    ----------
+    target:
+        Target name
+    target_coord (optional):
+        Target coordinates (astropy Skycoord)
+    search_radius:
+        TIC entries around the target coordinaes wihtin this radius are considered.
+    **kwargs:
+        dict to be passed to astroquery.Catalogs.query_object or query_region.
+    """
 
-        def _tic_handler(lc,signum):
-            '''Supporting function of `query_TIC`'''
-            print('the query of the TIC is taking a long time... Something may be wrong with the database right now...')
+    def _tic_handler(lc, signum):
+        '''Supporting function of `query_TIC`'''
+        print('the query of the TIC is taking a long time... Something may be wrong with the database right now...')
 
-        deg_radius = float(search_radius / u.deg)
-        arc_radius = float(search_radius / u.arcsec)
+    deg_radius = float(search_radius / u.deg)
 
-        tic = None
-        tess_coord = None
-        tmag = None
-        nb_coords = []
-        nb_tmags = []
-        tic_index = -1
+    tic = None
+    tess_coord = None
+    tmag = None
+    nb_coords = []
+    nb_tmags = []
+    tic_index = -1
 
-        try:
-            # The TIC query should finish relatively fast, but has sometimes taken (a lot!) longer.
-            # Setting a timer to warn the user if this is the case...
-            signal.signal(signal.SIGALRM,_tic_handler)
-            signal.alarm(30) # This should be finished after 30 seconds, but it may take longer...
+    try:
+        # The TIC query should finish relatively fast, but has sometimes taken (a lot!) longer.
+        # Setting a timer to warn the user if this is the case...
+        signal.signal(signal.SIGALRM, _tic_handler)
+        signal.alarm(30)  # This should be finished after 30 seconds, but it may take longer...
 
-            catalogTIC = Catalogs.query_region(target_coord, catalog="TIC", radius=deg_radius,**kwargs)
-            signal.alarm(0)
+        catalogTIC = Catalogs.query_region(target_coord, catalog="TIC", radius=deg_radius, **kwargs)
+        signal.alarm(0)
 
-        except:
-            print(f"no entry could be retrieved from the TIC around {target}.")
-            catalogTIC = []
+    except:
+        print(f"no entry could be retrieved from the TIC around {target}.")
+        catalogTIC = []
 
-        if(len(catalogTIC) == 0):
-            print(f"no entry around {target} was found in the TIC within a {deg_radius:5.3f} degree radius.")
+    if (len(catalogTIC) == 0):
+        print(f"no entry around {target} was found in the TIC within a {deg_radius:5.3f} degree radius.")
+
+    else:
+        if not (tic_id is None):
+            # tic_index = np.argmin((np.array(catalogTIC['ID'],dtype=int) - int(tic_id))**2.) # Original line
+            tic_index = np.argwhere(catalogTIC['ID'] == str(tic_id))  # Modified by Stefano
+            if tic_index.size == 0:
+                return '-1', None, None, None, None
+
+            else:
+                tic_index = tic_index.item()
+        else:
+            tic_index = np.argmin(catalogTIC['dstArcSec'])
+
+        if (tic_index < 0):
+            print(f"the attempt to retrieve target {target} from the TIC failed.")
 
         else:
-            if not (tic_id is None):
-                # tic_index = np.argmin((np.array(catalogTIC['ID'],dtype=int) - int(tic_id))**2.) # Original line
-                tic_index = np.argwhere(catalogTIC['ID'] == str(tic_id)) # Modified by Stefano
-                if tic_index.size == 0:
-                    return '-1', None, None, None, None
+            tic = int(catalogTIC[tic_index]['ID'])
+            ra = catalogTIC[tic_index]['ra']
+            dec = catalogTIC[tic_index]['dec']
+            tmag = catalogTIC[tic_index]['Tmag']
 
-                else:
-                    tic_index = tic_index.item()
-            else:
-                tic_index = np.argmin(catalogTIC['dstArcSec'])
+            # Retrieve the coordinates
+            tess_coord = SkyCoord(ra, dec, unit="deg")
 
-            if(tic_index < 0):
-                print(f"the attempt to retrieve target {target} from the TIC failed.")
+            # Collecting the neighbours
+            if (len(catalogTIC) > 1):
+                for itic, tic_entry in enumerate(catalogTIC):
+                    if (itic != tic_index):
+                        nb_coords.append(SkyCoord(tic_entry['ra'], tic_entry['dec'], unit="deg"))
+                        nb_tmags.append(tic_entry['Tmag'])
 
-            else:
-                tic = int(catalogTIC[tic_index]['ID'])
-                ra = catalogTIC[tic_index]['ra']
-                dec = catalogTIC[tic_index]['dec']
-                tmag = catalogTIC[tic_index]['Tmag']
+    nb_tmags = np.array(nb_tmags)
 
-                # Retrieve the coordinates
-                tess_coord = SkyCoord(ra, dec, unit = "deg")
+    return tic, tess_coord, tmag, nb_coords, nb_tmags
 
-                # Collecting the neighbours
-                if(len(catalogTIC) > 1):
-                    for itic, tic_entry in enumerate(catalogTIC):
-                        if(itic != tic_index):
-                            nb_coords.append(SkyCoord(tic_entry['ra'], tic_entry['dec'], unit = "deg"))
-                            nb_tmags.append(tic_entry['Tmag'])
-
-        nb_tmags = np.array(nb_tmags)
-
-        return tic, tess_coord, tmag, nb_coords, nb_tmags
 
 def check_aperture_mask(aperture,
                         aperture_mask_max_elongation=14,
@@ -463,7 +470,7 @@ def check_aperture_mask(aperture,
     # If too elongated aperture (column)
     if not np.all(aperture.sum(axis=0) <= aperture_mask_max_elongation) and OK_aperture:
         # Check if is a bad defined aperture
-        if len( set( aperture.sum(axis=0) ) ) < 4:
+        if len(set(aperture.sum(axis=0))) < 4:
             err_msg = utils.print_err('Too elongated aperture (column).', prepend=prepend_err_msg)
             OK_aperture = False
         if np.any(aperture.sum(axis=0) == 0):
@@ -472,7 +479,7 @@ def check_aperture_mask(aperture,
     # If too elongated aperture (row)
     if not np.all(aperture.sum(axis=1) <= aperture_mask_max_elongation) and OK_aperture:
         # Check if is a bad defined aperture
-        if len( set( aperture.astype(int).sum(axis=1) ) ) < 4:
+        if len(set(aperture.astype(int).sum(axis=1))) < 4:
             err_msg = utils.print_err('Too elongated aperture (row).', prepend=prepend_err_msg)
             OK_aperture = False
         if np.any(aperture.sum(axis=1) == 0):
@@ -483,6 +490,7 @@ def check_aperture_mask(aperture,
         err_msg = utils.print_err('Too small aperture.', prepend=prepend_err_msg)
         OK_aperture = False
     return OK_aperture, err_msg
+
 
 def find_fainter_adjacent_pixels(seeds,
                                  image,
@@ -511,7 +519,8 @@ def find_fainter_adjacent_pixels(seeds,
             around the seed.
     """
     # Check that the dimension of `seeds` is correct
-    error_msg = '`seeds` has to be a 2D Numpy array whose second dimension has lengh 2. E.g.: np.array([[0,1], [5,5], [7,8]])'
+    error_msg = ('`seeds` has to be a 2D Numpy array whose second dimension has lengh 2.',
+                 ' E.g.: np.array([[0,1], [5,5], [7,8]])')
     try:
         if seeds.ndim != 2:
             raise ValueError(error_msg)
@@ -523,9 +532,9 @@ def find_fainter_adjacent_pixels(seeds,
     # * -1: Not part of the mask.
     # *  0: Part of the mask and previous seed
     # * +1: Part of the mask
-    score = np.repeat(-1,image.size).reshape(image.shape)
+    score = np.repeat(-1, image.size).reshape(image.shape)
     # The center defined by the initial seeds
-    score[seeds[:,0],seeds[:,1]] = 1
+    score[seeds[:, 0], seeds[:, 1]] = 1
     # Initialize the counter
     counter = 0
     while True:
@@ -534,36 +543,37 @@ def find_fainter_adjacent_pixels(seeds,
             print(f'Maximum number of iterations exceeded: max_iter={max_iter}')
             break
         # Find which pixels use as centers
-        centers = np.argwhere(score==1)
+        centers = np.argwhere(score == 1)
         # List to store the indices of the pixels to be included as part of the mask
         inds = []
         # Evaluate the condition for each center (i.e., search for adjacent fainter pixels)
         for center in centers:
             # Find the 4 adjacent pixels of pixel center
-            mask = np.repeat(False,image.size).reshape(image.shape)
-            mask[center[0],center[1]] = True
+            mask = np.repeat(False, image.size).reshape(image.shape)
+            mask[center[0], center[1]] = True
             mask = ~ndimage.binary_dilation(mask)
-            mask[center[0],center[1]] = True
+            mask[center[0], center[1]] = True
             masked_image = np.ma.masked_where(mask, image)
             # Find which of the adjacent pixels are not brighter than pixel center
             try:
-                ind = np.argwhere(masked_image <= masked_image.data[center[0],center[1]])
+                ind = np.argwhere(masked_image <= masked_image.data[center[0], center[1]])
             except u.UnitConversionError:
-                ind = np.argwhere(masked_image <= masked_image.data.value[center[0],center[1]])
+                ind = np.argwhere(masked_image <= masked_image.data.value[center[0], center[1]])
             inds.append(ind)
         # If any pixel fainter than the center one
         if len(inds) > 0:
             ind = np.concatenate(inds)
             # Extend the mask
-            score[ind[:,0],ind[:,1]] = 1
+            score[ind[:, 0], ind[:, 1]] = 1
             # Flag the all previous centers
-            score[centers[:,0],centers[:,1]] = 0
+            score[centers[:, 0], centers[:, 1]] = 0
         # If no pixel fainter than the center one
         else:
             break
     mask = score + 1
     mask = mask.astype(bool)
     return mask
+
 
 def mag2flux(mag, zp=20.60654144):
     """
@@ -658,58 +668,61 @@ def contamination(info,
         nb_coords_pixel = nb_coords_pixel[nb_order]
 
         nb_tmags = nb_tmags[:max_num_of_neighbour_stars]
-        nb_coords_pixel = nb_coords_pixel[:max_num_of_neighbour_stars,:]
+        nb_coords_pixel = nb_coords_pixel[:max_num_of_neighbour_stars, :]
     # Gaussian locations
-    locations = np.array([*target_coord_pixel,*nb_coords_pixel])
-    xpos = locations[:,0]
-    ypos = locations[:,1]
+    locations = np.array([*target_coord_pixel, *nb_coords_pixel])
+    xpos = locations[:, 0]
+    ypos = locations[:, 1]
     # Convert the magnitudes of the stars to flux
-    fluxes = mag2flux( np.concatenate( [np.array([target_tmag]), nb_tmags] ) )
+    fluxes = mag2flux(np.concatenate([np.array([target_tmag]), nb_tmags]))
     # Create model
     Gaussian2D = functional_models.Gaussian2D
-    Gaussians = [ Gaussian2D(amplitude=a,
-                             x_mean=x,
-                             y_mean=y,
-                             x_stddev=1,
-                             y_stddev=1) for a,x,y in zip(fluxes,xpos,ypos) ]
+    Gaussians = [Gaussian2D(amplitude=a,
+                            x_mean=x,
+                            y_mean=y,
+                            x_stddev=1,
+                            y_stddev=1) for a, x, y in zip(fluxes, xpos, ypos)]
     nGaussians = len(Gaussians)
     model = np.sum(Gaussians)
+
     def tie_sigma(model):
         '''Used to constrain the sigma of the Gaussians when performing the fit in `contamination()`'''
         try:
             return model.x_stddev
         except AttributeError:
             return model.x_stddev_0
-    def tie_amplitude(model,factor=1):
+
+    def tie_amplitude(model, factor=1):
         '''Used to constrain the amplitude of the Gaussians when performing the fit in `contamination()`'''
         return model.amplitude_0*factor
+
     # Set the constrains in the model
     if nGaussians == 1:
-        getattr(model,'x_mean').fixed = True
-        getattr(model,'y_mean').fixed = True
-        getattr(model,'y_stddev').tied = tie_sigma
-        getattr(model,'amplitude').min = 0.0
+        getattr(model, 'x_mean').fixed = True
+        getattr(model, 'y_mean').fixed = True
+        getattr(model, 'y_stddev').tied = tie_sigma
+        getattr(model, 'amplitude').min = 0.0
     else:
         for i in range(nGaussians):
             # Tie all Gaussian Sigmas to the x-dimension Sigma of the target star
-            getattr(model,f'y_stddev_{i}').tied = tie_sigma
-            getattr(model,f'x_stddev_{i}').tied = tie_sigma
+            getattr(model, f'y_stddev_{i}').tied = tie_sigma
+            getattr(model, f'x_stddev_{i}').tied = tie_sigma
             # Fix the Gaussian positions
-            getattr(model,f'x_mean_{i}').fixed = True
-            getattr(model,f'y_mean_{i}').fixed = True
+            getattr(model, f'x_mean_{i}').fixed = True
+            getattr(model, f'y_mean_{i}').fixed = True
             # Tie all the Gaussian amplitudes to the one of the target star
             fraction = fluxes[i]/fluxes[0]
             modified_tie_amplitude = partial(tie_amplitude, factor=fraction)
-            getattr(model,f'amplitude_{i}').tied = modified_tie_amplitude
+            getattr(model, f'amplitude_{i}').tied = modified_tie_amplitude
             # Untie and unfix for the target star
-            if i==0:
-                getattr(model,f'amplitude_{i}').min = 0.0
-                getattr(model,f'x_stddev_{i}').tied = False
-                getattr(model,f'amplitude_{i}').tied = False
+            if i == 0:
+                getattr(model, f'amplitude_{i}').min = 0.0
+                getattr(model, f'x_stddev_{i}').tied = False
+                getattr(model, f'amplitude_{i}').tied = False
     # Get background flux and remove it before fitting the stars
     bckgfit = fit_background(info, prepend_err_msg=prepend_err_msg)
     # Make the fit
-    (xsize,ysize) = image.shape
+    (xsize, ysize) = image.shape
     y, x = np.mgrid[:xsize, :ysize]
     fitter = fitting.LevMarLSQFitter()
     background = bckgfit(x, y)
@@ -717,40 +730,40 @@ def contamination(info,
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         try:
-            Fit = fitter(model,x,y,image)
+            Fit = fitter(model, x, y, image)
         except RecursionError as e:
             err_msg = utils.print_err(str(e), prepend=prepend_err_msg)
             return None, err_msg
     # Results
-    fitted_image = Fit(x,y) + background
+    fitted_image = Fit(x, y) + background
     if nGaussians == 1:
         TargetStar = Fit
         Neighbours = None
     else:
         TargetStar = Fit[0]
         Neighbours = []
-        for i in range(1,nGaussians):
+        for i in range(1, nGaussians):
             Neighbours.append(Fit[i])
         Neighbours = np.sum(Neighbours)
 
     # Find the significance of the non-homogeneous background
-    v1 = (0,0,1)
-    v2 = (bckgfit.slope_x.value, bckgfit.slope_y.value,-1)
-    v1 /=  np.linalg.norm(v1)
-    v2 /=  np.linalg.norm(v2)
-    cos = np.dot(v1,v2)
-    tan = np.sqrt(1-cos**2)/cos
+    v1 = (0, 0, 1)
+    v2 = (bckgfit.slope_x.value, bckgfit.slope_y.value, -1)
+    v1 /= np.linalg.norm(v1)
+    v2 /= np.linalg.norm(v2)
+    cos = np.dot(v1, v2)
+    tan = np.sqrt(1 - cos**2) / cos
     bkg_change = xsize*tan
     try:
-        fraction_bkg_change = np.abs(bkg_change/bckgfit(xsize/2,ysize/2)[0])
+        fraction_bkg_change = np.abs(bkg_change/bckgfit(xsize/2, ysize/2)[0])
     except TypeError:
-        fraction_bkg_change = np.abs(bkg_change/bckgfit(xsize/2,ysize/2))
+        fraction_bkg_change = np.abs(bkg_change/bckgfit(xsize/2, ysize/2))
     # Find the flux contribution of neighbor stars/target star/background to the aperture mask
-    neighbour_flux = (Fit(x,y)-TargetStar(x,y))
+    neighbour_flux = (Fit(x, y)-TargetStar(x, y))
     neighbour_flux_sum = np.sum(neighbour_flux[mask_aperture])
-    target_flux = TargetStar(x,y)
+    target_flux = TargetStar(x, y)
     target_flux_sum = np.sum(target_flux[mask_aperture])
-    bkg_flux = np.sum(bckgfit(x,y)[mask_aperture])
+    bkg_flux = np.sum(bckgfit(x, y)[mask_aperture])
     fraction_ap_contamination = neighbour_flux/target_flux
 
     fraction_ap_contamination = np.nan_to_num(fraction_ap_contamination, posinf=0, neginf=0, nan=0)
@@ -774,13 +787,13 @@ def contamination(info,
     # Store to info
     info.fit = SimpleNamespace()
     info.fit.fitted_image = fitted_image
-    info.fit.Plane = bckgfit # Function
+    info.fit.Plane = bckgfit  # Function
     # TODO: commenting out Target and Neighbours for now. Fails to save if no
     # neighbours. Unclear why.
     # info.fit.TargetStar = TargetStar # Function
     # info.fit.Neighbours = Neighbours # Function
-    info.fit.xPixel = x # Pixel coordinates
-    info.fit.yPixel = y # Pixel coordinates
+    info.fit.xPixel = x  # Pixel coordinates
+    info.fit.yPixel = y  # Pixel coordinates
     info.fit.neighbour_flux_ap = neighbour_flux_sum
     info.fit.target_flux_ap = target_flux_sum
     info.fit.bkg_flux_ap = bkg_flux
@@ -991,7 +1004,7 @@ def refine_aperture(info,
                 overlap_y = nb_coords_pixel_binned[:, 0][overlaps.astype(bool)]
 
                 remaining_overlap = aperture_with_neighbour(info,
-                                                            np.array([overlap_x,overlap_y]).T,
+                                                            np.array([overlap_x, overlap_y]).T,
                                                             id_msg=prepend_err_msg,
                                                             fraction=contamination_level)
                 if remaining_overlap.sum() > 0:
@@ -1052,8 +1065,8 @@ def refine_aperture(info,
 
     # Find if a target is within/near the aperture mask
     overlaps = ndimage.map_coordinates(aperture.astype(int),
-                                       [np.array([-1,0,1]) + target_coords_pixel_binned[1],
-                                        np.array([-1,0,1]) + target_coords_pixel_binned[0]],
+                                       [np.array([-1, 0, 1]) + target_coords_pixel_binned[1],
+                                        np.array([-1, 0, 1]) + target_coords_pixel_binned[0]],
                                        order=0)
     if overlaps.sum() == 0:
         if force_mask:
@@ -1138,14 +1151,16 @@ def exclude_intervals(tpf,
         raise TypeError('`intervals` must be a dictionary.')
     valid_types = (u.Unit, u.core.IrreducibleUnit, u.core.CompositeUnit, u.quantity.Quantity)
     for key, value in intervals.items():
-        if not isinstance(key,int):
+        if not isinstance(key, int):
             raise TypeError('`intervals` keys must be integers indicating the corresponding TESS sector.')
-        conditions = [isinstance(value,list),
-                      all(len(interval)==2 for interval in value),
-                      all(isinstance(interval[0],valid_types) for interval in value),
-                      all(isinstance(interval[1],valid_types) for interval in value)]
+        conditions = [isinstance(value, list),
+                      all(len(interval) == 2 for interval in value),
+                      all(isinstance(interval[0], valid_types) for interval in value),
+                      all(isinstance(interval[1], valid_types) for interval in value)]
         if not all(conditions):
-            raise TypeError('`intervals` values must be lists of tuples indicating the intervals to exclude. Each tuple must have two elements: the start and end of the interval expressed as a `~astropy.units.Quantity` or a `~astropy.units.Unit`.')
+            raise TypeError(('`intervals` values must be lists of tuples indicating the intervals to exclude.',
+                             ' Each tuple must have two elements: the start and end of the interval expressed as a ',
+                             '`~astropy.units.Quantity` or a `~astropy.units.Unit`.'))
 
     if info.sector in intervals.keys():
         intervals = intervals[info.sector]
@@ -1153,8 +1168,8 @@ def exclude_intervals(tpf,
         intervals = [Time(interval, format=tpf.time.format, scale=tpf.time.scale) for interval in intervals]
         for interval in intervals:
             # Find the indices of the quality mask that created tpf.time
-            ind = np.argwhere(tpf.quality_mask == True)
-            mask  = tpf.time > interval[0]
+            ind = np.argwhere(tpf.quality_mask)
+            mask = tpf.time > interval[0]
             mask &= tpf.time < interval[1]
             # Set to False the indices to be masked (ignored).
             # Note that we take a subset from `ind` because the masks where defined from tpf.time
@@ -1219,27 +1234,30 @@ def find_number_of_PCs(info,
     """
     dm = lk.DesignMatrix(regressors, name='regressors').pca(npc).append_constant()
     rc = lk.RegressionCorrector(lc)
-    lc_regressed = rc.correct(dm)
+    # lc_regressed = rc.correct(dm)
     # Find the median of the moving variance for each PCs
-    boxsize = np.floor( dm.values[:,0].size/nbins ).astype(int)
+    boxsize = np.floor(dm.values[:, 0].size/nbins).astype(int)
     pcs_variances = []
     for ipc in range(npc):
-        pcs_variances.append( pd.Series(dm.values[:,ipc]).rolling(boxsize).var().median() )
+        pcs_variances.append(pd.Series(dm.values[:, ipc]).rolling(boxsize).var().median())
     # pcs_variances = [ pd.Series(dm.values[:,ipc]).rolling(boxsize).var().median() for ipc in range(npc) ]
     pcs_variances = np.array(pcs_variances)
-    relative_change_variances = np.abs(np.diff(pcs_variances)/pcs_variances[:-1]) # < THIS IS NOT USED.
+    # relative_change_variances = np.abs(np.diff(pcs_variances)/pcs_variances[:-1]) # < THIS IS NOT USED.
     # Select PCs with variance above threshold value
-    ind_bad_pcs = np.argwhere(pcs_variances>threshold_variance)
+    ind_bad_pcs = np.argwhere(pcs_variances > threshold_variance)
     if ind_bad_pcs.size > 0:
         # Find index first PC that exceeds threshold value. This is the new npc
         new_npc = ind_bad_pcs[0].item()
     else:
-        print(f'TIC {info.tic} Sector {info.sector}: No principal components (PCs) with variance>{threshold_variance}. All {npc} PCs used (this is just FYI, for further information see arguments `max_num_of_pc`, `num_of_pc_bins`, `pc_threshold_variance`.')
+        msg = (f'TIC {info.tic} Sector {info.sector}: No principal components (PCs) with variance>{threshold_variance}',
+               '. All {npc} PCs used (this is just FYI, for further information see arguments `max_num_of_pc`, ',
+               '`num_of_pc_bins`, `pc_threshold_variance`.')
+        print(msg)
         new_npc = npc
     # Store to info
     info.pca_all = SimpleNamespace()
     info.pca_all.coef = rc.coefficients
-    info.pca_all.pc = [dm.values[:,i] for i in range(dm.rank)]
+    info.pca_all.pc = [dm.values[:, i] for i in range(dm.rank)]
     info.pca_all.dm = dm
     info.pca_all.rc = rc
     info.pca_all.npc = npc
@@ -1248,6 +1266,7 @@ def find_number_of_PCs(info,
     info.pca_all.threshold_variance = threshold_variance
     info.pca_all.nbins = nbins
     return new_npc, dm, rc
+
 
 def create_output_structure():
     """Dictionary-like object that organize the output of the pipeline."""
@@ -1275,6 +1294,7 @@ def create_output_structure():
     info.masks = None
     info.tag = None
     return info
+
 
 def extract_light_curve(fitsFile,
                         outputdir='processed',
@@ -1415,9 +1435,11 @@ def extract_light_curve(fitsFile,
         |--- 10.4. Neighbours:                 (astropy.modeling.core.CompoundModel)
         |         Fitted model (set of 2D Gaussians) of the neighbouring stars in the `fitted_image`.
         |--- 10.5. xPixel:                     (numpy.ndarra>)
-        |         Domain of `fitted_image` expresed as pixel coordinates. Generated by `numpy.mgrid` function. X-like coordinates.
+        |         Domain of `fitted_image` expresed as pixel coordinates. Generated by `numpy.mgrid` function.
+                  X-like coordinates.
         |--- 10.6. yPixel:                     (numpy.ndarra>)
-        |         Domain of `fitted_image` expresed as pixel coordinates. Generated by `numpy.mgrid` function. Y-like coordinates.
+        |         Domain of `fitted_image` expresed as pixel coordinates. Generated by `numpy.mgrid` function.
+                  Y-like coordinates.
         |--- 10.7. neighbour_flux_ap:          (numpy.float64)
         |         Flux contribution of neighboring stars to the aperture mask.
         |--- 10.8. target_flux_ap:             (numpy.float64)
@@ -1425,7 +1447,8 @@ def extract_light_curve(fitsFile,
         |--- 10.9. bkg_flux_ap:                (numpy.float64)
         |         Flux contribution of background to the aperture mask.
         |--- 10.10. fraction_contamination_ap: (numpy.float64)
-        |          Flux ratio of the aperture mask from neighbouring stars and the target star. I.e., `neighbour_flux/target_flux `.
+        |          Flux ratio of the aperture mask from neighbouring stars and the target star.
+                   I.e., `neighbour_flux/target_flux `.
         |--- 10.11. fraction_bkg_change:       (numpy.float64)
         |          Flux ratio of the background maximun change and average background.
 
@@ -1469,17 +1492,21 @@ def extract_light_curve(fitsFile,
         |--- 15.2. pc:                 (list)
         |          Principal components.
         |--- 15.3. dm:                 (lightkurve.correctors.designmatrix.DesignMatrix)
-        |          Design matirx for use in linear regression. A matrix of column vectors (principal components) used for the linear regression.
+        |          Design matirx for use in linear regression. A matrix of column vectors (principal components)
+        used for the linear regression.
         |--- 15.4. rc:                 (lightkurve.correctors.regressioncorrector.RegressionCorrector)
-        |          Regression Corrector object used to remove noise using linear regression against a design matrix `dm`.
+        |          Regression Corrector object used to remove noise using linear regression against a
+        design matrix `dm`.
         |--- 15.5. npc:                (int)
         |          Number of principal components available.
         |--- 15.6. npc_used:           (int)
         |          Number of principal components used for the linear regression.
         |--- 15.7. pc_variances:       (numpy.ndarray)
-        |          Estimate level of variance of each normalized principal component. Calculated as the median variance of chopped principal componentes (partitions).
+        |          Estimate level of variance of each normalized principal component. Calculated as the median
+        variance of chopped principal componentes (partitions).
         |--- 15.8. threshold_variance: (float)
-        |          Principal components with `pc_variances` values above this are not considered for the linear regression.
+        |          Principal components with `pc_variances` values above this are not considered for the
+        linear regression.
         |--- 15.9. nbins:              (int)
         |          Number of partition each principal component is divided to calculate 'pc_variances`.
 
@@ -1490,9 +1517,11 @@ def extract_light_curve(fitsFile,
         |--- 16.2. pc:   (list)
         |          Principal components.
         |--- 16.3. dm:   (lightkurve.correctors.designmatrix.DesignMatrix)
-        |          Design matirx for use in linear regression. A matrix of column vectors (principal components) used for the linear regression.
+        |          Design matirx for use in linear regression. A matrix of column vectors (principal components)
+        used for the linear regression.
         |--- 16.4. rc:   (lightkurve.correctors.regressioncorrector.RegressionCorrector)
-        |          Regression Corrector object used to remove noise using linear regression against a design matrix `dm`.
+        |          Regression Corrector object used to remove noise using linear regression against a
+        design matrix `dm`.
         |--- 16.5. npc:  (int)
         |          Number of principal components.
 
@@ -1508,13 +1537,16 @@ def extract_light_curve(fitsFile,
         |          Time of the corresponding cadence.
 
         18. excluded_intervals: (dict)
-            Intervals to exclude. The keys are integers indicating TESS sectors, and values are lists of tuples. Each tuple contains the initial and final time of the interval to exclude. Times are astropy units.
+            Intervals to exclude. The keys are integers indicating TESS sectors, and values are lists of tuples.
+            Each tuple contains the initial and final time of the interval to exclude. Times are astropy units.
         19. lc_raw1:            (lightkurve.lightcurve.TessLightCurve)
-            Raw light curve, without excluded intervals, generated using simple aperture potometry with the aperture mask.
+            Raw light curve, without excluded intervals, generated using simple aperture
+            potometry with the aperture mask.
         20. lc_raw2:            (lightkurve.lightcurve.TessLightCurve)
             Raw light curve, with excluded intervals, generated using simple aperture potometry with the aperture mask.
         21. lc_trend:           (lightkurve.lightcurve.LightCurve)
-            Regresor light curve obtained from the principal component analysis. Used for the linear regression of `lc_raw2`.
+            Regresor light curve obtained from the principal component analysis.
+            Used for the linear regression of `lc_raw2`.
 
         22. lc_regressed: (types.SimpleNamespace)
             Light curve after the linear regression. I.e., light curve with systematics corrected.
@@ -1541,33 +1573,34 @@ def extract_light_curve(fitsFile,
             Sentence aimed to identify potential problems during the light curve extraction.
     """
     # Handle a list-like input
-    valid_types = (list,np.ndarray,pd.core.series.Series)
-    if isinstance(fitsFile,valid_types):
+    valid_types = (list, np.ndarray, pd.core.series.Series)
+    if isinstance(fitsFile, valid_types):
         # Update kw arguments of the function
-        _extract_light_curve = partial(extract_light_curve, outputdir=outputdir,
-                                                            return_msg=return_msg,
-                                                            overwrite=overwrite,
-                                                            progressbar=False,
-                                                            ncores=1,
-                                                            verbose=verbose,
-                                                            excluded_intervals=excluded_intervals,
-                                                            delta_mag=delta_mag,
-                                                            arcsec_per_pixel=arcsec_per_pixel,
-                                                            aperture_mask_threshold=aperture_mask_threshold,
-                                                            aperture_mask_increasing_thresholds=aperture_mask_increasing_thresholds,
-                                                            max_num_of_pc=max_num_of_pc,
-                                                            num_of_pc_bins=num_of_pc_bins,
-                                                            pc_threshold_variance=pc_threshold_variance,
-                                                            sigma_clipping=sigma_clipping,
-                                                            aperture_mask_min_pixels=aperture_mask_min_pixels,
-                                                            aperture_mask_max_elongation=aperture_mask_max_elongation,
-                                                            contamination_level=contamination_level,
-                                                            save_neighbours=save_neighbours,
-                                                            force_mask=force_mask)
+        _extract_light_curve = partial(extract_light_curve,
+                                       outputdir=outputdir,
+                                       return_msg=return_msg,
+                                       overwrite=overwrite,
+                                       progressbar=False,
+                                       ncores=1,
+                                       verbose=verbose,
+                                       excluded_intervals=excluded_intervals,
+                                       delta_mag=delta_mag,
+                                       arcsec_per_pixel=arcsec_per_pixel,
+                                       aperture_mask_threshold=aperture_mask_threshold,
+                                       aperture_mask_increasing_thresholds=aperture_mask_increasing_thresholds,
+                                       max_num_of_pc=max_num_of_pc,
+                                       num_of_pc_bins=num_of_pc_bins,
+                                       pc_threshold_variance=pc_threshold_variance,
+                                       sigma_clipping=sigma_clipping,
+                                       aperture_mask_min_pixels=aperture_mask_min_pixels,
+                                       aperture_mask_max_elongation=aperture_mask_max_elongation,
+                                       contamination_level=contamination_level,
+                                       save_neighbours=save_neighbours,
+                                       force_mask=force_mask)
         # Use a simple for loop (to avoid multiprocessing issues)
-        if ncores==1:
+        if ncores == 1:
             for i, fitsfile in enumerate(fitsFile):
-                    _extract_light_curve(fitsfile)
+                _extract_light_curve(fitsfile)
         else:
             # Pool for parallel processing
             with Pool(ncores) as pool:
@@ -1578,8 +1611,9 @@ def extract_light_curve(fitsFile,
                 deque(it, maxlen=0)
         return
 
-    if not isinstance(fitsFile,str):
-        raise TypeError('`fitsFile` must be a string pointing to the TESS Target Pixel File to process. It can also be a list of those, including numpy.ndarray and pandas.core.series.Series.')
+    if not isinstance(fitsFile, str):
+        err_str = '`fitsFile` must be a string pointing to the TESS TPF. Can also be a list, np.ndarray or pd Series.'
+        raise TypeError(err_str)
 
     fitsFile = Path(fitsFile)
     # Print name of file being processed
@@ -1607,8 +1641,8 @@ def extract_light_curve(fitsFile,
         err_msg = f'"lightkurve.TessTargetPixelFile()" could not open file {fitsFile}. Exception: -> {e_name}: {e}.'
         print(err_msg)
         results.tag = err_msg
-        with open(output,'wb') as picklefile:
-            pickle.dump(results,picklefile)
+        with open(output, 'wb') as picklefile:
+            pickle.dump(results, picklefile)
         if return_msg:
             return err_msg
         return
@@ -1635,7 +1669,7 @@ def extract_light_curve(fitsFile,
     # Exclude NaN values outside the camera
     background_mask &= ~np.isnan(results.median_image)
     # Estimate the median flux background
-    median_background_flux = np.median(results.median_image[background_mask])
+    # median_background_flux = np.median(results.median_image[background_mask])
     # Store to results
     results.masks = SimpleNamespace()
     results.masks.aperture = aperture_mask
@@ -1656,8 +1690,8 @@ def extract_light_curve(fitsFile,
         else:
             # Save results
             results.tag = err_msg
-            with open(output,'wb') as picklefile:
-                pickle.dump(results,picklefile)
+            with open(output, 'wb') as picklefile:
+                pickle.dump(results, picklefile)
             if return_msg:
                 return err_msg
             return
@@ -1669,8 +1703,8 @@ def extract_light_curve(fitsFile,
         err_msg = id_msg+'No WCS info in header'
         print(err_msg)
         results.tag = err_msg
-        with open(output,'wb') as picklefile:
-            pickle.dump(results,picklefile)
+        with open(output, 'wb') as picklefile:
+            pickle.dump(results, picklefile)
         if return_msg:
             return err_msg
         return
@@ -1699,8 +1733,8 @@ def extract_light_curve(fitsFile,
         else:
             # Save results
             results.tag = err_msg
-            with open(output,'wb') as picklefile:
-                pickle.dump(results,picklefile)
+            with open(output, 'wb') as picklefile:
+                pickle.dump(results, picklefile)
             if return_msg:
                 return err_msg
             return
@@ -1716,24 +1750,47 @@ def extract_light_curve(fitsFile,
                                         time=tpf.time.value)
     # Fit the image and find the contamination fraction within the aperture mask
     fitted_image, err_msg = contamination(results, prepend_err_msg=id_msg)
-    results.masks.aperture = results.masks.aperture & (results.fit.fraction_contamination_ap_pixel<contamination_level)
+    results.masks.aperture = results.masks.aperture & (results.fit.fraction_contamination_ap_pixel
+                                                       < contamination_level)
 
-    if fitted_image is None:
-        # Save results
-        results.tag = err_msg
-        with open(output,'wb') as picklefile:
-            pickle.dump(results,picklefile)
-        if return_msg:
-            return err_msg
-        return
+    # check a final time
+    OK_ap_mask, err_msg = check_aperture_mask(results.masks.aperture,
+                                              prepend_err_msg=id_msg,
+                                              aperture_mask_min_pixels=aperture_mask_min_pixels,
+                                              aperture_mask_max_elongation=aperture_mask_max_elongation)
+    # If aperture is not good, exit program with corresponding message
+    if not OK_ap_mask:
+        if force_mask:
+            _, _, _, target_coord_pixel = get_neighbours(results, tpf.wcs)
+            aperture = np.zeros_like(background_mask)
+            target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0].astype(int)
+            aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
+            results.masks.aperture = aperture
+        else:
+            # Save results
+            results.tag = err_msg
+            with open(output, 'wb') as picklefile:
+                pickle.dump(results, picklefile)
+            if return_msg:
+                return err_msg
+            return
+
+        if fitted_image is None:
+            # Save results
+            results.tag = err_msg
+            with open(output, 'wb') as picklefile:
+                pickle.dump(results, picklefile)
+            if return_msg:
+                return err_msg
+            return
     # Generate the raw light curve
     lc_raw1 = tpf.to_lightcurve(aperture_mask=results.masks.aperture, method='aperture')
     # Store to results
     results.lc_raw1 = lc_raw1
     # Find the indices of the quality mask that created the light curve
-    ind = np.argwhere(tpf.quality_mask == True)
+    ind = np.argwhere(tpf.quality_mask)
     # Masks with True value the light curve times with null or NaN flux
-    mask  = lc_raw1.flux.value == 0
+    mask = lc_raw1.flux.value == 0
     mask |= lc_raw1.flux.value == np.nan
     # Set to False the indices to be masked (ignored).
     # Note that we take a subset from `ind` because the masks where defined from the light curve
@@ -1741,6 +1798,14 @@ def extract_light_curve(fitsFile,
     if excluded_intervals is not None:
         tpf = exclude_intervals(tpf, results, excluded_intervals)
     # Generate the Simple-Aperture-Photometry light curve
+    if tpf.shape[0] == 0:
+        err_msg = f'TIC {results.tic} Sector {results.sector}: No good data in tpf: Skipped'
+        results.tag = err_msg
+        with open(output, 'wb') as picklefile:
+            pickle.dump(results, picklefile)
+        if return_msg:
+            return err_msg
+        return
     lc_sap = tpf.to_lightcurve(aperture_mask=results.masks.aperture, method='aperture')
     # Identify NaN values in the flux
     nan_mask = np.isnan(lc_sap.flux)
@@ -1760,8 +1825,8 @@ def extract_light_curve(fitsFile,
     if npc == 0:
         # Save results
         results.tag = id_msg+'No PC used, no detrending done.'
-        with open(output,'wb') as picklefile:
-            pickle.dump(results,picklefile)
+        with open(output, 'wb') as picklefile:
+            pickle.dump(results, picklefile)
         if return_msg:
             return err_msg
         return
@@ -1772,7 +1837,8 @@ def extract_light_curve(fitsFile,
         lc_regressed = rc.correct(dm)
         lc_trend = rc.diagnostic_lightcurves['regressors']
         # Sigma clipping the remove outliers
-        lc_regressed_no_outliers, lc_mask_regressed_outliers = lc_regressed.remove_outliers(return_mask=True, sigma=sigma_clipping)
+        lc_regressed_no_outliers, lc_mask_regressed_outliers = lc_regressed.remove_outliers(return_mask=True,
+                                                                                            sigma=sigma_clipping)
         # Store to results
         results.lc_trend = lc_trend
         results.lc_regressed = SimpleNamespace()
@@ -1782,14 +1848,14 @@ def extract_light_curve(fitsFile,
         results.lc_regressed_clean = lc_regressed_no_outliers
         results.pca_used = SimpleNamespace()
         results.pca_used.coef = rc.coefficients
-        results.pca_used.pc = [dm.values[:,i] for i in range(dm.rank)]
+        results.pca_used.pc = [dm.values[:, i] for i in range(dm.rank)]
         results.pca_used.dm = dm
         results.pca_used.rc = rc
         results.pca_used.npc = npc
         # Save results
         results.tag = 'OK'
-        with open(output,'wb') as picklefile:
-            pickle.dump(results,picklefile)
+        with open(output, 'wb') as picklefile:
+            pickle.dump(results, picklefile)
         if return_msg:
             return OK_msg
         return
@@ -1800,10 +1866,11 @@ def extract_light_curve(fitsFile,
             return id_msg+'::'+repr(e)+'::'+str(e)
         return
 
+
 def group_lcs(inputdir,
               outputdir='grouped',
-              namePattern = 'tic{TIC}_sec{SECTOR}_corrected.pickle',
-              outputname_pattern = 'tic{TIC}_allsectors_corrected.pickle',
+              namePattern='tic{TIC}_sec{SECTOR}_corrected.pickle',
+              outputname_pattern='tic{TIC}_allsectors_corrected.pickle',
               TICs='all',
               sectors='all',
               progressbar=False,
@@ -1858,17 +1925,17 @@ def group_lcs(inputdir,
     globPattern = namePattern.replace('{TIC}', '*').replace('{SECTOR}', '*')
     filepaths = [file for file in inputdir.glob(globPattern)]
     filenames = [file.name for file in filepaths]
-    filesTable = pd.DataFrame({'filename':filenames, 'filepath':filepaths})
+    filesTable = pd.DataFrame({'filename': filenames, 'filepath': filepaths})
     # Get TIC and sector number from filename
     filesTable['tic'] = filesTable['filename'].apply(utils.return_TIC_1, args=(namePattern,))
     filesTable['sector'] = filesTable['filename'].apply(utils.return_sector, args=(namePattern,))
     # Sort by TIC and sector number
-    filesTable.sort_values(by=['tic','sector'], inplace=True)
+    filesTable.sort_values(by=['tic', 'sector'], inplace=True)
     # Select the TIC number to process
     if not TICs == 'all':
         if isinstance(TICs, (int, np.integer)):
             filesTable = filesTable.query('tic == @TICs')
-        elif isinstance(TICs,(list,np.ndarray)):
+        elif isinstance(TICs, (list, np.ndarray)):
             filesTable = filesTable.query('tic in @TICs')
         else:
             raise ValueError(f'TICs must be "all", an integer or a list of integers. Got {TICs}')
@@ -1876,12 +1943,13 @@ def group_lcs(inputdir,
     if not sectors == 'all':
         if isinstance(sectors, (int, np.integer)):
             filesTable = filesTable.query('sector == @sectors')
-        elif isinstance(sectors,(list,np.ndarray)):
+        elif isinstance(sectors, (list, np.ndarray)):
             filesTable = filesTable.query('sector in @sectors')
         else:
             raise ValueError(f'`sectors` must be "all", an integer or a list of integers. Got {sectors}.')
     # Group filenames by the TIC number
     groups = filesTable.groupby('tic')
+
     def grouping(tic, group):
         """Unpickle all files for a TIC number, group them into a list, and pickle it."""
         # group = groups.get_group(tic)
@@ -1889,10 +1957,10 @@ def group_lcs(inputdir,
         # Loop over each sector in the group
         for sector in group.iloc:
             # Unpickle
-            with open((file:=sector['filepath']),'rb') as picklefile:
+            with open((file := sector['filepath']), 'rb') as picklefile:
                 try:
                     result = pickle.load(picklefile)
-                except EOFError as e:
+                except EOFError:
                     print(f'Skipped: TIC={tic}, sector={sector.sector} -> file {file} seems to be empty.')
             all_sectors.append(result)
         # Save
@@ -1903,7 +1971,8 @@ def group_lcs(inputdir,
     # Enable parallel processing
     if progressbar:
         groups = tqdm(groups)
-    Parallel(n_jobs=ncores)(delayed(grouping)(tic,group) for tic,group in groups)
+    Parallel(n_jobs=ncores)(delayed(grouping)(tic, group) for tic, group in groups)
+
 
 def stitch_group(inputdir,
                  TICs='all',
@@ -1970,21 +2039,22 @@ def stitch_group(inputdir,
     globPattern = namePattern.replace('{TIC}', '*')
     filepaths = [file for file in inputdir.glob(globPattern)]
     filenames = [file.name for file in filepaths]
-    filesTable = pd.DataFrame({'filename':filenames, 'filepath':filepaths})
+    filesTable = pd.DataFrame({'filename': filenames, 'filepath': filepaths})
     # Get TIC number from filename
     filesTable['tic'] = filesTable['filename'].apply(utils.return_TIC_2, args=(namePattern,))
     # Sort by TIC number
     filesTable.sort_values(by=['tic'], inplace=True)
     # Select the TIC number to process
     if not TICs == 'all':
-        if isinstance(TICs,(int, np.integer)):
+        if isinstance(TICs, (int, np.integer)):
             filesTable = filesTable.query('tic == @TICs')
-        elif isinstance(TICs,(list,np.ndarray)):
+        elif isinstance(TICs, (list, np.ndarray)):
             filesTable = filesTable.query('tic in @TICs')
         else:
             raise ValueError(f'TICs must be "all", an integer or a list of integers. Got {TICs}')
     # Group filenames by the TIC number
     groups = filesTable.groupby('tic')
+
     def stitching(TIC):
         # Pickle file containing LC of all sectors
         file = inputdir/Path(namePattern.format(TIC=TIC))
@@ -1995,7 +2065,8 @@ def stitch_group(inputdir,
         if sectors == 'all':
             lcs = [sector.lc_regressed_clean for sector in all_sectors if sector.tag == 'OK']
         else:
-            lcs = [sector.lc_regressed_clean for sector in all_sectors if ((sector.tag == 'OK') & (sector.sector in sectors))]
+            lcs = [sector.lc_regressed_clean for sector in all_sectors
+                   if ((sector.tag == 'OK') & (sector.sector in sectors))]
         # If no OK sectors
         if len(lcs) == 0:
             return None
@@ -2017,6 +2088,7 @@ def stitch_group(inputdir,
     if progressbar:
         TICs = tqdm(TICs)
     Parallel(n_jobs=ncores)(delayed(stitching)(tic) for tic in TICs)
+
 
 def get_group_summary(files,
                       csvname='summary.csv',
@@ -2073,7 +2145,7 @@ def get_group_summary(files,
     def read_pickle_file(file, verbose=True):
         """Read pickle file created by function `group_lcs`."""
         error_message = '`file` must be a str or pathlib.Path pointing to the pickle file created by `group_lcs`.'
-        if isinstance(file,str):
+        if isinstance(file, str):
             if not (file := Path(file)).exists():
                 raise ValueError(f'{file} does not exist.')
             if verbose:
@@ -2088,7 +2160,7 @@ def get_group_summary(files,
         def extract_direct_value(info, attr):
             '''Handle info extraction'''
             try:
-                value = getattr(info,attr)
+                value = getattr(info, attr)
                 if value is None:
                     return np.nan
                 else:
@@ -2138,7 +2210,7 @@ def get_group_summary(files,
 
         return summary
 
-    if isinstance(files,str):
+    if isinstance(files, str):
         # If given a directory, get the list of files in it
         if Path(files).is_dir():
             inputdir = Path(files)
@@ -2147,16 +2219,16 @@ def get_group_summary(files,
             globPattern = namePattern.replace('{TIC}', '*')
             filepaths = [file for file in inputdir.glob(globPattern)]
             filenames = [file.name for file in filepaths]
-            filesTable = pd.DataFrame({'filename':filenames, 'filepath':filepaths})
+            filesTable = pd.DataFrame({'filename': filenames, 'filepath': filepaths})
             # Get TIC number from filename
             filesTable['tic'] = filesTable['filename'].apply(utils.return_TIC_2, args=(namePattern,))
             # Sort by TIC number
             filesTable.sort_values(by=['tic'], inplace=True)
             # Select the TIC number to process
             if not TICs == 'all':
-                if isinstance(TICs,(int, np.integer)):
+                if isinstance(TICs, (int, np.integer)):
                     filesTable = filesTable.query('tic == @TICs')
-                elif isinstance(TICs,(list,np.ndarray,pd.core.series.Series)):
+                elif isinstance(TICs, (list, np.ndarray, pd.core.series.Series)):
                     filesTable = filesTable.query('tic in @TICs')
                 else:
                     raise ValueError(f'TICs must be "all", an integer or a list of integers. Got {TICs}')
@@ -2166,7 +2238,7 @@ def get_group_summary(files,
             files = [files]
 
     valid_types = (list, np.ndarray, pd.core.series.Series)
-    if not isinstance(files,valid_types):
+    if not isinstance(files, valid_types):
         raise TypeError(f'`files` must be a str, list, np.ndarray or pd.core.series.Series. Got {type(files)} instead.')
 
     summaries = []
