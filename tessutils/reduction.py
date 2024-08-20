@@ -723,14 +723,16 @@ def contamination(info,
             return None, err_msg
     # Results
     fitted_image = Fit(x,y) + background
-    TargetStar = Fit[0]
-    if nGaussians > 1:
+    if nGaussians == 1:
+        TargetStar = Fit
+        Neighbours = None
+    else:
+        TargetStar = Fit[0]
         Neighbours = []
         for i in range(1,nGaussians):
             Neighbours.append(Fit[i])
         Neighbours = np.sum(Neighbours)
-    else:
-        Neighbours = None
+
     # Find the significance of the non-homogeneous background
     v1 = (0,0,1)
     v2 = (bckgfit.slope_x.value, bckgfit.slope_y.value,-1)
@@ -750,6 +752,7 @@ def contamination(info,
     target_flux_sum = np.sum(target_flux[mask_aperture])
     bkg_flux = np.sum(bckgfit(x,y)[mask_aperture])
     fraction_ap_contamination = neighbour_flux/target_flux
+
     fraction_ap_contamination = np.nan_to_num(fraction_ap_contamination, posinf=0, neginf=0, nan=0)
     fraction_ap_contamination_total = neighbour_flux_sum/target_flux_sum
 
@@ -772,8 +775,10 @@ def contamination(info,
     info.fit = SimpleNamespace()
     info.fit.fitted_image = fitted_image
     info.fit.Plane = bckgfit # Function
-    info.fit.TargetStar = TargetStar # Function
-    info.fit.Neighbours = Neighbours # Function
+    # TODO: commenting out Target and Neighbours for now. Fails to save if no
+    # neighbours. Unclear why.
+    # info.fit.TargetStar = TargetStar # Function
+    # info.fit.Neighbours = Neighbours # Function
     info.fit.xPixel = x # Pixel coordinates
     info.fit.yPixel = y # Pixel coordinates
     info.fit.neighbour_flux_ap = neighbour_flux_sum
@@ -908,7 +913,8 @@ def refine_aperture(info,
                     thresholds=iter([7.5, 10, 15, 20, 30, 40, 50]),
                     arcsec_per_pixel=21*u.arcsec,  # TESS CCD,
                     delta_mag=4,
-                    contamination_level=0.01):
+                    contamination_level=0.01,
+                    force_mask=False):
     """
     Purpose:
         Find an aperture mask that only contains one source and only
@@ -963,6 +969,7 @@ def refine_aperture(info,
                                 prepend_err_msg=prepend_err_msg)
 
     nb_coords, nb_coords_pixel, _, target_coord_pixel = neighbours
+    target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0].astype(int)
 
     aperture = info.masks.aperture
     image = info.median_image
@@ -976,6 +983,7 @@ def refine_aperture(info,
                                                [nb_coords_pixel_binned[:, 1],
                                                 nb_coords_pixel_binned[:, 0]],
                                                order=0)
+
             if overlaps.sum() == 0:
                 break
             else:
@@ -991,31 +999,41 @@ def refine_aperture(info,
                         aperture[int(r[0])][int(r[1])] = False
                         info.masks.aperture = aperture
                     if np.sum(aperture.astype(int)) == 0:
-                        # If no aperture left, set the aperture to `None`
-                        err_msg = utils.print_err('Not isolated target star.',
-                                                  prepend=prepend_err_msg)
-                        info.masks.aperture = None
-                        return None, err_msg
+                        if force_mask:
+                            aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
+                        else:
+                            # If no aperture left, set the aperture to `None`
+                            err_msg = utils.print_err('Not isolated target star.',
+                                                      prepend=prepend_err_msg)
+                            info.masks.aperture = None
+                            return None, err_msg
                     break
                 if remaining_overlap.sum() == 0:
                     break
+
                 try:
                     # Make a new aperture mask
                     threshold = next(thresholds)
                     aperture = threshold_mask(image, threshold=threshold,
                                               reference_pixel='center')
                 except StopIteration:
-                    # If no more thresholds to try, set the aperture to `None`
-                    err_msg = utils.print_err('Not isolated target star.',
-                                              prepend=prepend_err_msg)
-                    info.masks.aperture = None
-                    return None, err_msg
+                    if force_mask:
+                        aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
+                    else:
+                        # If no more thresholds to try, set the aperture to `None`
+                        err_msg = utils.print_err('Not isolated target star.',
+                                                  prepend=prepend_err_msg)
+                        info.masks.aperture = None
+                        return None, err_msg
                 if np.sum(aperture.astype(int)) == 0:
-                    # If no aperture left, set the aperture to `None`
-                    err_msg = utils.print_err('Not isolated target star.',
-                                              prepend=prepend_err_msg)
-                    info.masks.aperture = None
-                    return None, err_msg
+                    if force_mask:
+                        aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
+                    else:
+                        # If no aperture left, set the aperture to `None`
+                        err_msg = utils.print_err('Not isolated target star.',
+                                                  prepend=prepend_err_msg)
+                        info.masks.aperture = None
+                        return None, err_msg
 
     # The code below breaks in crowded fields, it might also add pixel back in
     # that we just removed from the aperture
@@ -1029,7 +1047,6 @@ def refine_aperture(info,
     # the brightest pixel
     # aperture = find_fainter_adjacent_pixels(seeds,ap_image)
     # Make target pixel coordenate match the image grid, ie, bin it
-    target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0]
 
     aperture = check_continous(aperture, target_coord_pixel[0])
 
@@ -1039,11 +1056,14 @@ def refine_aperture(info,
                                         np.array([-1,0,1]) + target_coords_pixel_binned[0]],
                                        order=0)
     if overlaps.sum() == 0:
-        err_msg = utils.print_err('Target star not within the mask.',
-                                  prepend=prepend_err_msg)
-        print(err_msg)
-        info.masks.aperture = None
-        return None, err_msg
+        if force_mask:
+            aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
+        else:
+            err_msg = utils.print_err('Target star not within the mask.',
+                                      prepend=prepend_err_msg)
+            print(err_msg)
+            info.masks.aperture = None
+            return None, err_msg
     # Store to info
     info.masks.aperture = aperture
     return aperture, err_msg
@@ -1276,7 +1296,8 @@ def extract_light_curve(fitsFile,
                         aperture_mask_min_pixels=4,
                         aperture_mask_max_elongation=14,
                         contamination_level=0.01,
-                        save_neighbours=False):
+                        save_neighbours=False,
+                        force_mask=False):
     """
     Purpose:
         Extract light curve from a TESS Target Pixel File (TPF).
@@ -1541,7 +1562,8 @@ def extract_light_curve(fitsFile,
                                                             aperture_mask_min_pixels=aperture_mask_min_pixels,
                                                             aperture_mask_max_elongation=aperture_mask_max_elongation,
                                                             contamination_level=contamination_level,
-                                                            save_neighbours=save_neighbours)
+                                                            save_neighbours=save_neighbours,
+                                                            force_mask=force_mask)
         # Use a simple for loop (to avoid multiprocessing issues)
         if ncores==1:
             for i, fitsfile in enumerate(fitsFile):
@@ -1625,13 +1647,20 @@ def extract_light_curve(fitsFile,
                                               aperture_mask_max_elongation=aperture_mask_max_elongation)
     # If aperture is not good, exit program with corresponding message
     if not OK_ap_mask:
-        # Save results
-        results.tag = err_msg
-        with open(output,'wb') as picklefile:
-            pickle.dump(results,picklefile)
-        if return_msg:
-            return err_msg
-        return
+        if force_mask:
+            _, _, _, target_coord_pixel = get_neighbours(results, tpf.wcs)
+            aperture = np.zeros_like(background_mask)
+            target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0].astype(int)
+            aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
+            results.masks.aperture = aperture
+        else:
+            # Save results
+            results.tag = err_msg
+            with open(output,'wb') as picklefile:
+                pickle.dump(results,picklefile)
+            if return_msg:
+                return err_msg
+            return
     # Refine aperture
     try:
         WCS = tpf.wcs
@@ -1651,7 +1680,8 @@ def extract_light_curve(fitsFile,
                                                       delta_mag=delta_mag,
                                                       arcsec_per_pixel=arcsec_per_pixel,
                                                       thresholds=aperture_mask_increasing_thresholds,
-                                                      contamination_level=contamination_level)
+                                                      contamination_level=contamination_level,
+                                                      force_mask=force_mask)
     # check aperture again
     if results.masks.aperture is not None:
         OK_ap_mask, err_msg = check_aperture_mask(results.masks.aperture,
@@ -1660,13 +1690,20 @@ def extract_light_curve(fitsFile,
                                                   aperture_mask_max_elongation=aperture_mask_max_elongation)
     # If not satisfactory aperture mask
     if results.masks.aperture is None:
-        # Save results
-        results.tag = err_msg
-        with open(output,'wb') as picklefile:
-            pickle.dump(results,picklefile)
-        if return_msg:
-            return err_msg
-        return
+        if force_mask:
+            _, _, _, target_coord_pixel = get_neighbours(results, WCS)
+            aperture = np.zeros_like(background_mask)
+            target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0].astype(int)
+            aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
+            results.masks.aperture = aperture
+        else:
+            # Save results
+            results.tag = err_msg
+            with open(output,'wb') as picklefile:
+                pickle.dump(results,picklefile)
+            if return_msg:
+                return err_msg
+            return
     # Variation in time of aperture's center of mass
     centroid_col, centroid_row = tpf.estimate_centroids(aperture_mask=results.masks.aperture, method='quadratic')
     centroid_col = centroid_col.value - tpf.column
@@ -1679,6 +1716,8 @@ def extract_light_curve(fitsFile,
                                         time=tpf.time.value)
     # Fit the image and find the contamination fraction within the aperture mask
     fitted_image, err_msg = contamination(results, prepend_err_msg=id_msg)
+    results.masks.aperture = results.masks.aperture & (results.fit.fraction_contamination_ap_pixel<contamination_level)
+
     if fitted_image is None:
         # Save results
         results.tag = err_msg
@@ -1938,7 +1977,7 @@ def stitch_group(inputdir,
     filesTable.sort_values(by=['tic'], inplace=True)
     # Select the TIC number to process
     if not TICs == 'all':
-        if isinstance(TICs,int):
+        if isinstance(TICs,(int, np.integer)):
             filesTable = filesTable.query('tic == @TICs')
         elif isinstance(TICs,(list,np.ndarray)):
             filesTable = filesTable.query('tic in @TICs')
@@ -2115,7 +2154,7 @@ def get_group_summary(files,
             filesTable.sort_values(by=['tic'], inplace=True)
             # Select the TIC number to process
             if not TICs == 'all':
-                if isinstance(TICs,int):
+                if isinstance(TICs,(int, np.integer)):
                     filesTable = filesTable.query('tic == @TICs')
                 elif isinstance(TICs,(list,np.ndarray,pd.core.series.Series)):
                     filesTable = filesTable.query('tic in @TICs')
