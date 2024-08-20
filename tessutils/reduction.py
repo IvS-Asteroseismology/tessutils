@@ -584,6 +584,31 @@ def mag2flux(mag, zp=20.60654144):
     """
     return np.clip(10**(-0.4*(mag - zp)), 0, None)
 
+
+def fit_background(info, prepend_err_msg=''):
+    mask_background = info.masks.background
+    image = info.median_image
+    Planar2D = functional_models.Planar2D
+    median_background_flux = np.nanmedian(image[mask_background])
+    background_model = Planar2D(slope_x=0, slope_y=0,
+                                intercept=median_background_flux)
+
+    (xsize, ysize) = image.shape
+    y, x = np.mgrid[:xsize, :ysize]
+    fitter = fitting.LinearLSQFitter()
+    image = np.nan_to_num(image)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+    try:
+        Fit = fitter(background_model, x[mask_background], y[mask_background],
+                     image[mask_background])
+    except RecursionError as e:
+        err_msg = utils.print_err(str(e), prepend=prepend_err_msg)
+        return None, err_msg
+
+    return Fit
+
+
 def contamination(info,
                   prepend_err_msg='',
                   max_num_of_neighbour_stars=40):
@@ -619,7 +644,6 @@ def contamination(info,
     # Unpack some information
     image = info.median_image
     mask_aperture = info.masks.aperture
-    mask_background = info.masks.background
     target_coord_pixel = info.target.pix
     target_tmag = info.target.mag
     nb_coords_pixel = info.neighbours_used.pix
@@ -643,7 +667,6 @@ def contamination(info,
     fluxes = mag2flux( np.concatenate( [np.array([target_tmag]), nb_tmags] ) )
     # Create model
     Gaussian2D = functional_models.Gaussian2D
-    Planar2D = functional_models.Planar2D
     Gaussians = [ Gaussian2D(amplitude=a,
                              x_mean=x,
                              y_mean=y,
@@ -683,51 +706,53 @@ def contamination(info,
                 getattr(model,f'amplitude_{i}').min = 0.0
                 getattr(model,f'x_stddev_{i}').tied = False
                 getattr(model,f'amplitude_{i}').tied = False
-    # Add a 2D plane to the model
-    median_background_flux = np.nanmedian(image[mask_background])
-    model += Planar2D(slope_x=0, slope_y=0, intercept=median_background_flux)
+    # Get background flux and remove it before fitting the stars
+    bckgfit = fit_background(info, prepend_err_msg=prepend_err_msg)
     # Make the fit
     (xsize,ysize) = image.shape
     y, x = np.mgrid[:xsize, :ysize]
     fitter = fitting.LevMarLSQFitter()
-    image = np.nan_to_num(image)
+    background = bckgfit(x, y)
+    image = np.nan_to_num(image) - background
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         try:
-            Fit = fitter(model,x[mask_background],y[mask_background], image[mask_background])
+            Fit = fitter(model,x,y,image)
         except RecursionError as e:
             err_msg = utils.print_err(str(e), prepend=prepend_err_msg)
             return None, err_msg
     # Results
-    fitted_image = Fit(x,y)
-    Plane = Fit[-1]
-    TargetStar = Fit[0]
-    if nGaussians > 1:
+    fitted_image = Fit(x,y) + background
+    if nGaussians == 1:
+        TargetStar = Fit
+        Neighbours = None
+    else:
+        TargetStar = Fit[0]
         Neighbours = []
         for i in range(1,nGaussians):
             Neighbours.append(Fit[i])
         Neighbours = np.sum(Neighbours)
-    else:
-        Neighbours = None
+
     # Find the significance of the non-homogeneous background
     v1 = (0,0,1)
-    v2 = (Plane.slope_x.value, Plane.slope_y.value,-1)
+    v2 = (bckgfit.slope_x.value, bckgfit.slope_y.value,-1)
     v1 /=  np.linalg.norm(v1)
     v2 /=  np.linalg.norm(v2)
     cos = np.dot(v1,v2)
     tan = np.sqrt(1-cos**2)/cos
     bkg_change = xsize*tan
     try:
-        fraction_bkg_change = np.abs(bkg_change/Plane(xsize/2,ysize/2)[0])
+        fraction_bkg_change = np.abs(bkg_change/bckgfit(xsize/2,ysize/2)[0])
     except TypeError:
-        fraction_bkg_change = np.abs(bkg_change/Plane(xsize/2,ysize/2))
+        fraction_bkg_change = np.abs(bkg_change/bckgfit(xsize/2,ysize/2))
     # Find the flux contribution of neighbor stars/target star/background to the aperture mask
-    neighbour_flux = (Fit(x,y)-TargetStar(x,y)-Plane(x,y))
+    neighbour_flux = (Fit(x,y)-TargetStar(x,y))
     neighbour_flux_sum = np.sum(neighbour_flux[mask_aperture])
     target_flux = TargetStar(x,y)
     target_flux_sum = np.sum(target_flux[mask_aperture])
-    bkg_flux = np.sum( Plane(x,y)[mask_aperture] )
+    bkg_flux = np.sum(bckgfit(x,y)[mask_aperture])
     fraction_ap_contamination = neighbour_flux/target_flux
+
     fraction_ap_contamination = np.nan_to_num(fraction_ap_contamination, posinf=0, neginf=0, nan=0)
     fraction_ap_contamination_total = neighbour_flux_sum/target_flux_sum
 
@@ -749,9 +774,11 @@ def contamination(info,
     # Store to info
     info.fit = SimpleNamespace()
     info.fit.fitted_image = fitted_image
-    info.fit.Plane = Plane # Function
-    info.fit.TargetStar = TargetStar # Function
-    info.fit.Neighbours = Neighbours # Function
+    info.fit.Plane = bckgfit # Function
+    # TODO: commenting out Target and Neighbours for now. Fails to save if no
+    # neighbours. Unclear why.
+    # info.fit.TargetStar = TargetStar # Function
+    # info.fit.Neighbours = Neighbours # Function
     info.fit.xPixel = x # Pixel coordinates
     info.fit.yPixel = y # Pixel coordinates
     info.fit.neighbour_flux_ap = neighbour_flux_sum
@@ -774,13 +801,120 @@ def aperture_with_neighbour(results, overlap, fraction=0.05, id_msg=None):
     return np.array(remain_overlap)
 
 
+def get_neighbours(info, wcs,
+                   arcsec_per_pixel=21*u.arcsec,  # TESS CCD
+                   delta_mag=4,
+                   prepend_err_msg=''):
+    '''
+    Get information on neighbouring stars. Query TIC at MAST.
+
+    Parameters
+    ----------
+    info : SimpleNamespace object with the following attributes:
+            * info.median_image
+            * info.ra
+            * info.dec
+            * info.tic
+        to which will be added:
+            * info.target
+            * info.neighbours_all
+            * info.neighbours_used
+    wcs : astropy.wcs.WCS
+        World Coordinate System.
+    arcsec_per_pixel : astropy.units.quantity.Quantity, optional
+        The pixel scale. The default is 21*u.arcsec for TESS.
+    delta_mag : float, optional
+        Maximum magnitude difference between neighbours and target.
+        (Neighbours being fainter)
+        The default is 4.
+    prepend_err_msg : str, optional
+        String to prepend to the error message. Default is ''.
+
+    Returns
+    -------
+    All information is also added to the info object but with a return value we
+    do not have to retrieve these information again in the following step.
+    nb_coords : np.array (float)
+        coordinates of the neighbours.
+    nb_coords_pixel : np.array (float)
+        pixel coordinates of the neighbours.
+    target_coord : astropy.SkyCoord
+        target coordinate
+    target_coord_pixel : np.array (float)
+        target position in pixel coordinates
+    '''
+    # Unpack information
+    tic = info.tic
+
+    # Query surrounding area in MAST
+    xdim = info.median_image.shape[0]
+    search_radius_pixel = xdim / np.sqrt(2)  # sqrt(2) * xdim / 2
+    search_radius = search_radius_pixel * arcsec_per_pixel
+    target_coord = SkyCoord(info.ra, info.dec, unit="deg")
+    query_results = query_TIC(f'TIC {tic}', target_coord,
+                              search_radius=search_radius, tic_id=tic)
+    tic_tmp, tess_coord, target_tmag, nb_coords, nb_tmags = query_results
+    # Check we retrieve the correct target
+    if tic != tic_tmp:
+        msg = 'The TIC number from the MAST query does not match the TESS FITS image.'
+        err_msg = utils.print_err(msg, prepend=prepend_err_msg)
+        print(err_msg)
+        return None, err_msg
+    # Make neighbor coordenates into NumPy arrays
+    nb_coords = np.array(nb_coords)
+    # Store to info (get plain numbers from the AstroPy instance)
+    info.neighbours_all = SimpleNamespace()
+    info.neighbours_all.mag = nb_tmags
+    info.neighbours_all.ra = np.array([coord.ra.deg for coord in nb_coords])
+    info.neighbours_all.dec = np.array([coord.dec.deg for coord in nb_coords])
+    # Filter neighbour stars: Remove too faint stars
+    nb_faintest_mag = target_tmag + delta_mag
+    if nb_faintest_mag > 17:  # but cut at T=17
+        nb_faintest_mag = 17.
+    mask = nb_tmags <= nb_faintest_mag
+    nb_tmags = nb_tmags[mask]
+    nb_coords = nb_coords[mask]
+    # Convert coordenates to pixels
+    target_coord_pixel = np.array([target_coord.to_pixel(wcs, origin=0)])
+    # Store to info (get plain numbers from the AstroPy instance)
+    info.target = SimpleNamespace()
+    info.target.mag = target_tmag
+    info.target.ra = target_coord.ra.deg
+    info.target.dec = target_coord.dec.deg
+    info.target.pix = target_coord_pixel
+    if nb_coords.size > 0:
+        nb_coords_pixel = np.array([coord.to_pixel(wcs, origin=0)
+                                    for coord in nb_coords],
+                                   dtype=float)
+        # Filter neighbour stars: Remove stars outside the image bounds
+        nb_pixel_value = ndimage.map_coordinates(info.median_image,
+                                                 [nb_coords_pixel[:, 1],
+                                                  nb_coords_pixel[:, 0]],
+                                                 order=0)
+        mask = nb_pixel_value != 0
+        nb_tmags = nb_tmags[mask]
+        nb_coords = nb_coords[mask]
+        nb_coords_pixel = nb_coords_pixel[mask, :]
+    else:
+        nb_coords_pixel = np.array([])
+    # Store to info (get plain numbers from the AstroPy instance)
+    info.neighbours_used = SimpleNamespace()
+    info.neighbours_used.mag = nb_tmags
+    info.neighbours_used.ra = np.array([coord.ra.deg for coord in nb_coords])
+    info.neighbours_used.dec = np.array([coord.dec.deg for coord in nb_coords])
+    info.neighbours_used.pix = nb_coords_pixel
+
+    return nb_coords, nb_coords_pixel, target_coord, target_coord_pixel
+
+
 def refine_aperture(info,
                     wcs,
                     prepend_err_msg='',
                     thresholds=iter([7.5, 10, 15, 20, 30, 40, 50]),
-                    arcsec_per_pixel=21*u.arcsec, # TESS CCD,
+                    arcsec_per_pixel=21*u.arcsec,  # TESS CCD,
                     delta_mag=4,
-                    contamination_level=0.01):
+                    contamination_level=0.01,
+                    force_mask=False):
     """
     Purpose:
         Find an aperture mask that only contains one source and only
@@ -827,104 +961,79 @@ def refine_aperture(info,
         err_msg (str):
             Error message. If no error, it is an empty string.
     """
-    # Unpack information
-    tic = info.tic
-    ra = info.ra
-    dec = info.dec
-    aperture = info.masks.aperture
-    image = info.median_image
-    threshold = info.aperture_threshold
     # Initialization
     err_msg = ''
-    # Query surrounding area in MAST
-    search_radius_pixel = np.sqrt(2*np.max(image.shape)**2)/2
-    search_radius = search_radius_pixel * arcsec_per_pixel
-    target_coord = SkyCoord(ra, dec, unit = "deg")
-    tic_tmp,\
-    tess_coord, target_tmag,\
-    nb_coords, nb_tmags = query_TIC(f'TIC {tic}',target_coord, search_radius=search_radius, tic_id=tic)
-    # Check we retrieve the correct target
-    if tic != tic_tmp:
-        err_msg = utils.print_err('The TIC number from the MAST query does not match the one from the TESS FITS image.', prepend=prepend_err_msg)
-        print(err_msg)
-        return None, err_msg
-    # Make neighbor coordenates into NumPy arrays
-    nb_coords = np.array(nb_coords)
-    # Store to info (get plain numbers from the AstroPy instance)
-    info.neighbours_all = SimpleNamespace()
-    info.neighbours_all.mag = nb_tmags
-    info.neighbours_all.ra = np.array([coord.ra.deg  for coord in nb_coords])
-    info.neighbours_all.dec = np.array([coord.dec.deg for coord in nb_coords])
-    # Filter neighbour stars: Remove too faint stars
-    nb_faintest_mag = target_tmag + delta_mag
-    if nb_faintest_mag > 17:  # but cut at T=17
-        nb_faintest_mag = 17.
-    mask = nb_tmags <= nb_faintest_mag
-    nb_tmags =  nb_tmags[mask]
-    nb_coords = nb_coords[mask]
-    # Convert coordenates to pixels
-    target_coord_pixel = np.array( [target_coord.to_pixel(wcs,origin=0)] )
-    # Store to info (get plain numbers from the AstroPy instance)
-    info.target = SimpleNamespace()
-    info.target.mag = target_tmag
-    info.target.ra = target_coord.ra.deg
-    info.target.dec = target_coord.dec.deg
-    info.target.pix = target_coord_pixel
-    if nb_coords.size > 0:
-        nb_coords_pixel = np.array( [coord.to_pixel(wcs,origin=0) for coord in nb_coords], dtype=float)
-        # Filter neighbour stars: Remove stars outside the image bounds
-        nb_pixel_value = ndimage.map_coordinates(image, [nb_coords_pixel[:,1], nb_coords_pixel[:,0]], order=0)
-        mask = nb_pixel_value != 0
-        nb_tmags =  nb_tmags[mask]
-        nb_coords = nb_coords[mask]
-        nb_coords_pixel = nb_coords_pixel[mask,:]
-    else:
-        nb_coords_pixel = np.array([])
-    # Store to info (get plain numbers from the AstroPy instance)
-    info.neighbours_used = SimpleNamespace()
-    info.neighbours_used.mag = nb_tmags
-    info.neighbours_used.ra = np.array([coord.ra.deg  for coord in nb_coords])
-    info.neighbours_used.dec = np.array([coord.dec.deg for coord in nb_coords])
-    info.neighbours_used.pix = nb_coords_pixel
+
+    neighbours = get_neighbours(info, wcs, arcsec_per_pixel=arcsec_per_pixel,
+                                delta_mag=delta_mag,
+                                prepend_err_msg=prepend_err_msg)
+
+    nb_coords, nb_coords_pixel, _, target_coord_pixel = neighbours
+    target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0].astype(int)
+
+    aperture = info.masks.aperture
+    image = info.median_image
+
     if nb_coords.size > 0:
         # Make neighbour pixels coordenates match the image grid, ie, bin them
         nb_coords_pixel_binned = np.floor(nb_coords_pixel+0.5)
         while True:
             # Find if a neighbour is within the aperture mask
-            overlaps = ndimage.map_coordinates(aperture.astype(int), [nb_coords_pixel_binned[:,1], nb_coords_pixel_binned[:,0]], order=0)
+            overlaps = ndimage.map_coordinates(aperture.astype(int),
+                                               [nb_coords_pixel_binned[:, 1],
+                                                nb_coords_pixel_binned[:, 0]],
+                                               order=0)
+
             if overlaps.sum() == 0:
                 break
             else:
-                overlap_x = nb_coords_pixel_binned[:,1][overlaps.astype(bool)]
-                overlap_y = nb_coords_pixel_binned[:,0][overlaps.astype(bool)]
+                overlap_x = nb_coords_pixel_binned[:, 1][overlaps.astype(bool)]
+                overlap_y = nb_coords_pixel_binned[:, 0][overlaps.astype(bool)]
 
-                remaining_overlap = aperture_with_neighbour(info, np.array([overlap_x, overlap_y]).T, id_msg=prepend_err_msg, fraction=contamination_level)
+                remaining_overlap = aperture_with_neighbour(info,
+                                                            np.array([overlap_x,overlap_y]).T,
+                                                            id_msg=prepend_err_msg,
+                                                            fraction=contamination_level)
                 if remaining_overlap.sum() > 0:
                     for r in remaining_overlap:
                         aperture[int(r[0])][int(r[1])] = False
                         info.masks.aperture = aperture
                     if np.sum(aperture.astype(int)) == 0:
-                        # If no aperture left, set the aperture to `None`
-                        err_msg = utils.print_err('Not isolated target star.', prepend=prepend_err_msg)
-                        info.masks.aperture = None
-                        return None, err_msg
+                        if force_mask:
+                            aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
+                        else:
+                            # If no aperture left, set the aperture to `None`
+                            err_msg = utils.print_err('Not isolated target star.',
+                                                      prepend=prepend_err_msg)
+                            info.masks.aperture = None
+                            return None, err_msg
                     break
                 if remaining_overlap.sum() == 0:
                     break
+
                 try:
                     # Make a new aperture mask
                     threshold = next(thresholds)
-                    aperture = threshold_mask(image, threshold=threshold, reference_pixel='center')
+                    aperture = threshold_mask(image, threshold=threshold,
+                                              reference_pixel='center')
                 except StopIteration:
-                    # If no more thresholds to try, set the aperture to `None`
-                    err_msg = utils.print_err('Not isolated target star.', prepend=prepend_err_msg)
-                    info.masks.aperture = None
-                    return None, err_msg
+                    if force_mask:
+                        aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
+                    else:
+                        # If no more thresholds to try, set the aperture to `None`
+                        err_msg = utils.print_err('Not isolated target star.',
+                                                  prepend=prepend_err_msg)
+                        info.masks.aperture = None
+                        return None, err_msg
                 if np.sum(aperture.astype(int)) == 0:
-                    # If no aperture left, set the aperture to `None`
-                    err_msg = utils.print_err('Not isolated target star.', prepend=prepend_err_msg)
-                    info.masks.aperture = None
-                    return None, err_msg
+                    if force_mask:
+                        aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
+                    else:
+                        # If no aperture left, set the aperture to `None`
+                        err_msg = utils.print_err('Not isolated target star.',
+                                                  prepend=prepend_err_msg)
+                        info.masks.aperture = None
+                        return None, err_msg
 
     # The code below breaks in crowded fields, it might also add pixel back in
     # that we just removed from the aperture
@@ -934,10 +1043,10 @@ def refine_aperture(info,
     # Find the brightest pixel within the mask
     # ap_image = np.ma.masked_where(~aperture, image)
     # seeds = np.argwhere(ap_image==ap_image.max())
-    # Ensure the mask contains only pixels with decreasing flux w.r.t. the brightest pixel
+    # Ensure the mask contains only pixels with decreasing flux w.r.t.
+    # the brightest pixel
     # aperture = find_fainter_adjacent_pixels(seeds,ap_image)
     # Make target pixel coordenate match the image grid, ie, bin it
-    target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0]
 
     aperture = check_continous(aperture, target_coord_pixel[0])
 
@@ -947,10 +1056,14 @@ def refine_aperture(info,
                                         np.array([-1,0,1]) + target_coords_pixel_binned[0]],
                                        order=0)
     if overlaps.sum() == 0:
-        err_msg = utils.print_err('Target star not within the mask.', prepend=prepend_err_msg)
-        print(err_msg)
-        info.masks.aperture = None
-        return None, err_msg
+        if force_mask:
+            aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
+        else:
+            err_msg = utils.print_err('Target star not within the mask.',
+                                      prepend=prepend_err_msg)
+            print(err_msg)
+            info.masks.aperture = None
+            return None, err_msg
     # Store to info
     info.masks.aperture = aperture
     return aperture, err_msg
@@ -1183,7 +1296,8 @@ def extract_light_curve(fitsFile,
                         aperture_mask_min_pixels=4,
                         aperture_mask_max_elongation=14,
                         contamination_level=0.01,
-                        save_neighbours=False):
+                        save_neighbours=False,
+                        force_mask=False):
     """
     Purpose:
         Extract light curve from a TESS Target Pixel File (TPF).
@@ -1279,143 +1393,151 @@ def extract_light_curve(fitsFile,
         Right ascension.
         4. dec:     (float)
         Declination.
-        5. headers: (list)
+        5. camera:  (int)
+        TESS camera.
+        6. ccd      (int)
+        TESS CCD identifier.
+        7. row      (int)
+        CCD row at origin of TPF.
+        8. column   (int)
+        CCD column at origin of TPF.
+        9. headers: (list)
         List with all headers in the original TPF.
 
-        6. fit: (types.SimpleNamespace)
+        10. fit: (types.SimpleNamespace)
         Information regarding the fit of 2D Gaussians reproducing the TPF's median cadence image.
-        |--- 6.1. fitted_image:               (numpy.ndarray)
+        |--- 10.1. fitted_image:               (numpy.ndarray)
         |         TPF's median cadence image.
-        |--- 6.2. Plane:                      (astropy.modeling.functional_models.Planar2D)
+        |--- 10.2. Plane:                      (astropy.modeling.functional_models.Planar2D)
         |         Fitted model (2D plane) of the background signal of the `fitted_image`.
-        |--- 6.3. TargetStar:                 (astropy.modeling.functional_models.Gaussian2D)
+        |--- 10.3. TargetStar:                 (astropy.modeling.functional_models.Gaussian2D)
         |         Fitted model (2D Gaussian) of the target star in the `fitted_image`.
-        |--- 6.4. Neighbours:                 (astropy.modeling.core.CompoundModel)
+        |--- 10.4. Neighbours:                 (astropy.modeling.core.CompoundModel)
         |         Fitted model (set of 2D Gaussians) of the neighbouring stars in the `fitted_image`.
-        |--- 6.5. xPixel:                     (numpy.ndarra>)
+        |--- 10.5. xPixel:                     (numpy.ndarra>)
         |         Domain of `fitted_image` expresed as pixel coordinates. Generated by `numpy.mgrid` function. X-like coordinates.
-        |--- 6.6. yPixel:                     (numpy.ndarra>)
+        |--- 10.6. yPixel:                     (numpy.ndarra>)
         |         Domain of `fitted_image` expresed as pixel coordinates. Generated by `numpy.mgrid` function. Y-like coordinates.
-        |--- 6.7. neighbour_flux_ap:          (numpy.float64)
+        |--- 10.7. neighbour_flux_ap:          (numpy.float64)
         |         Flux contribution of neighboring stars to the aperture mask.
-        |--- 6.8. target_flux_ap:             (numpy.float64)
+        |--- 10.8. target_flux_ap:             (numpy.float64)
         |         Flux contribution of target star to the aperture mask.
-        |--- 6.9. bkg_flux_ap:                (numpy.float64)
+        |--- 10.9. bkg_flux_ap:                (numpy.float64)
         |         Flux contribution of background to the aperture mask.
-        |--- 6.10. fraction_contamination_ap: (numpy.float64)
+        |--- 10.10. fraction_contamination_ap: (numpy.float64)
         |          Flux ratio of the aperture mask from neighbouring stars and the target star. I.e., `neighbour_flux/target_flux `.
-        |--- 6.11. fraction_bkg_change:       (numpy.float64)
+        |--- 10.11. fraction_bkg_change:       (numpy.float64)
         |          Flux ratio of the background maximun change and average background.
 
-        7. neighbours_all: (types.SimpleNamespace)
+        11. neighbours_all: (types.SimpleNamespace)
         Information regarding all found neighbouring stars.
-        |--- 7.1. mag: (numpy.ndarray)
+        |--- 11.1. mag: (numpy.ndarray)
         |         TESS magnitude.
-        |--- 7.2. ra:  (numpy.ndarray)
+        |--- 11.2. ra:  (numpy.ndarray)
         |         Right ascension.
-        |--- 7.3. dec: (numpy.ndarray)
+        |--- 11.3. dec: (numpy.ndarray)
         |         Declination.
 
-        8. neighbours_used: (types.SimpleNamespace)
+        12. neighbours_used: (types.SimpleNamespace)
         Information regarding only neighbouring stars used during the fit.
-        |--- 8.1. mag: (numpy.ndarray)
+        |--- 12.1. mag: (numpy.ndarray)
         |         TESS magnitude.
-        |--- 8.2. ra:  (numpy.ndarray)
+        |--- 12.2. ra:  (numpy.ndarray)
         |         Right ascension.
-        |--- 8.3. dec: (numpy.ndarray)
+        |--- 12.3. dec: (numpy.ndarray)
         |         Declination.
-        |--- 8.4. pix: (numpy.ndarray)
+        |--- 12.4. pix: (numpy.ndarray)
         |         Pixel coordinates.
 
-        9. target: (types.SimpleNamespace)
-        |--- 9.1. mag: (numpy.float64)
+        13. target: (types.SimpleNamespace)
+        |--- 13.1. mag: (numpy.float64)
         |         Description
-        |--- 9.2. ra:  (numpy.float64)
+        |--- 13.2. ra:  (numpy.float64)
         |         Description
-        |--- 9.3. dec: (numpy.float64)
+        |--- 13.3. dec: (numpy.float64)
         |         Description
-        |--- 9.4. pix: (numpy.ndarray)
+        |--- 13.4. pix: (numpy.ndarray)
         |         Description
 
-        10. aperture_threshold: (int)
+        14. aperture_threshold: (int)
             Number of sigma the aperture mask is brighter than the median flux of the TPF's median cadence image.
 
-        11. pca_all: (types.SimpleNamespace)
+        15. pca_all: (types.SimpleNamespace)
             Information regarding all principal components available to detrend the light curve.
-        |--- 11.1. coef:               (numpy.ndarray)
+        |--- 15.1. coef:               (numpy.ndarray)
         |          Coefficients of the principal components.
-        |--- 11.2. pc:                 (list)
+        |--- 15.2. pc:                 (list)
         |          Principal components.
-        |--- 11.3. dm:                 (lightkurve.correctors.designmatrix.DesignMatrix)
+        |--- 15.3. dm:                 (lightkurve.correctors.designmatrix.DesignMatrix)
         |          Design matirx for use in linear regression. A matrix of column vectors (principal components) used for the linear regression.
-        |--- 11.4. rc:                 (lightkurve.correctors.regressioncorrector.RegressionCorrector)
+        |--- 15.4. rc:                 (lightkurve.correctors.regressioncorrector.RegressionCorrector)
         |          Regression Corrector object used to remove noise using linear regression against a design matrix `dm`.
-        |--- 11.5. npc:                (int)
+        |--- 15.5. npc:                (int)
         |          Number of principal components available.
-        |--- 11.6. npc_used:           (int)
+        |--- 15.6. npc_used:           (int)
         |          Number of principal components used for the linear regression.
-        |--- 11.7. pc_variances:       (numpy.ndarray)
+        |--- 15.7. pc_variances:       (numpy.ndarray)
         |          Estimate level of variance of each normalized principal component. Calculated as the median variance of chopped principal componentes (partitions).
-        |--- 11.8. threshold_variance: (float)
+        |--- 15.8. threshold_variance: (float)
         |          Principal components with `pc_variances` values above this are not considered for the linear regression.
-        |--- 11.9. nbins:              (int)
+        |--- 15.9. nbins:              (int)
         |          Number of partition each principal component is divided to calculate 'pc_variances`.
 
-        12. pca_used: (types.SimpleNamespace)
+        16. pca_used: (types.SimpleNamespace)
             Information regarding only principal components used for detrending of the light curve.
-        |--- 12.1. coef: (numpy.ndarray)
+        |--- 16.1. coef: (numpy.ndarray)
         |          Coefficients of the principal components.
-        |--- 12.2. pc:   (list)
+        |--- 16.2. pc:   (list)
         |          Principal components.
-        |--- 12.3. dm:   (lightkurve.correctors.designmatrix.DesignMatrix)
+        |--- 16.3. dm:   (lightkurve.correctors.designmatrix.DesignMatrix)
         |          Design matirx for use in linear regression. A matrix of column vectors (principal components) used for the linear regression.
-        |--- 12.4. rc:   (lightkurve.correctors.regressioncorrector.RegressionCorrector)
+        |--- 16.4. rc:   (lightkurve.correctors.regressioncorrector.RegressionCorrector)
         |          Regression Corrector object used to remove noise using linear regression against a design matrix `dm`.
-        |--- 12.5. npc:  (int)
+        |--- 16.5. npc:  (int)
         |          Number of principal components.
 
-        13. centroids:             (types.SimpleNamespace)
+        17. centroids:             (types.SimpleNamespace)
             Information regarding the centroid of the TPF's median cadence image.
-        |--- 13.1. col:            (numpy.ndarray)
+        |--- 17.1. col:            (numpy.ndarray)
         |          Its column-like location.
-        |--- 13.2. row:            (numpy.ndarray)
+        |--- 17.2. row:            (numpy.ndarray)
         |          Its row-like location.
-        |--- 13.3. sqrt_col2_row2: (numpy.ndarray)
+        |--- 17.3. sqrt_col2_row2: (numpy.ndarray)
         |          Its distance-like location.
-        |--- 13.4. time:           (numpy.ndarray)
+        |--- 17.4. time:           (numpy.ndarray)
         |          Time of the corresponding cadence.
 
-        14. excluded_intervals: (dict)
+        18. excluded_intervals: (dict)
             Intervals to exclude. The keys are integers indicating TESS sectors, and values are lists of tuples. Each tuple contains the initial and final time of the interval to exclude. Times are astropy units.
-        15. lc_raw1:            (lightkurve.lightcurve.TessLightCurve)
+        19. lc_raw1:            (lightkurve.lightcurve.TessLightCurve)
             Raw light curve, without excluded intervals, generated using simple aperture potometry with the aperture mask.
-        16. lc_raw2:            (lightkurve.lightcurve.TessLightCurve)
+        20. lc_raw2:            (lightkurve.lightcurve.TessLightCurve)
             Raw light curve, with excluded intervals, generated using simple aperture potometry with the aperture mask.
-        17. lc_trend:           (lightkurve.lightcurve.LightCurve)
+        21. lc_trend:           (lightkurve.lightcurve.LightCurve)
             Regresor light curve obtained from the principal component analysis. Used for the linear regression of `lc_raw2`.
 
-        18. lc_regressed: (types.SimpleNamespace)
+        22. lc_regressed: (types.SimpleNamespace)
             Light curve after the linear regression. I.e., light curve with systematics corrected.
-        |--- 18.1. lc:             (lightkurve.lightcurve.TessLightCurve)
+        |--- 22.1. lc:             (lightkurve.lightcurve.TessLightCurve)
         |          Light curve.
-        |--- 18.2. outlier_mask:   (numpy.ndarray)
+        |--- 22.2. outlier_mask:   (numpy.ndarray)
         |          Mask indicating values marked for removal by the sigma clipping.
-        |--- 18.3. sigma_clipping: (int)
+        |--- 22.3. sigma_clipping: (int)
         |          Sigma value used by the sigma clipping method on the light curve flux.
 
-        19. lc_regressed_clean: (lightkurve.lightcurve.TessLightCurve)
+        23. lc_regressed_clean: (lightkurve.lightcurve.TessLightCurve)
             Regressed light curve with flux outliers removed by sigma clipping.
-        20. median_image:            (numpy.ndarray)
+        24. median_image:            (numpy.ndarray)
             TPF's median cadence image.
 
-        21. masks: (types.SimpleNamespace)
+        25. masks: (types.SimpleNamespace)
             Information regarding the masks for the TPF's median cadence image.
-        |--- 21.1. aperture:   (numpy.ndarray)
+        |--- 25.1. aperture:   (numpy.ndarray)
         |          Aperture mask.
-        |--- 21.2. background: (numpy.ndarray)
+        |--- 25.2. background: (numpy.ndarray)
         |          Background mask.
 
-        22. tag: (str)
+        26. tag: (str)
             Sentence aimed to identify potential problems during the light curve extraction.
     """
     # Handle a list-like input
@@ -1440,7 +1562,8 @@ def extract_light_curve(fitsFile,
                                                             aperture_mask_min_pixels=aperture_mask_min_pixels,
                                                             aperture_mask_max_elongation=aperture_mask_max_elongation,
                                                             contamination_level=contamination_level,
-                                                            save_neighbours=save_neighbours)
+                                                            save_neighbours=save_neighbours,
+                                                            force_mask=force_mask)
         # Use a simple for loop (to avoid multiprocessing issues)
         if ncores==1:
             for i, fitsfile in enumerate(fitsFile):
@@ -1494,6 +1617,10 @@ def extract_light_curve(fitsFile,
     results.sector = tpf.get_keyword('sector')
     results.ra = tpf.ra
     results.dec = tpf.dec
+    results.camera = tpf.camera
+    results.ccd = tpf.ccd
+    results.row = tpf.row
+    results.column = tpf.column
     # Initialize messages
     id_msg = f'TIC {results.tic} Sector {results.sector}: Skipped: '
     OK_msg = f'TIC {results.tic} Sector {results.sector}: OK'
@@ -1520,13 +1647,20 @@ def extract_light_curve(fitsFile,
                                               aperture_mask_max_elongation=aperture_mask_max_elongation)
     # If aperture is not good, exit program with corresponding message
     if not OK_ap_mask:
-        # Save results
-        results.tag = err_msg
-        with open(output,'wb') as picklefile:
-            pickle.dump(results,picklefile)
-        if return_msg:
-            return err_msg
-        return
+        if force_mask:
+            _, _, _, target_coord_pixel = get_neighbours(results, tpf.wcs)
+            aperture = np.zeros_like(background_mask)
+            target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0].astype(int)
+            aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
+            results.masks.aperture = aperture
+        else:
+            # Save results
+            results.tag = err_msg
+            with open(output,'wb') as picklefile:
+                pickle.dump(results,picklefile)
+            if return_msg:
+                return err_msg
+            return
     # Refine aperture
     try:
         WCS = tpf.wcs
@@ -1546,7 +1680,8 @@ def extract_light_curve(fitsFile,
                                                       delta_mag=delta_mag,
                                                       arcsec_per_pixel=arcsec_per_pixel,
                                                       thresholds=aperture_mask_increasing_thresholds,
-                                                      contamination_level=contamination_level)
+                                                      contamination_level=contamination_level,
+                                                      force_mask=force_mask)
     # check aperture again
     if results.masks.aperture is not None:
         OK_ap_mask, err_msg = check_aperture_mask(results.masks.aperture,
@@ -1555,13 +1690,20 @@ def extract_light_curve(fitsFile,
                                                   aperture_mask_max_elongation=aperture_mask_max_elongation)
     # If not satisfactory aperture mask
     if results.masks.aperture is None:
-        # Save results
-        results.tag = err_msg
-        with open(output,'wb') as picklefile:
-            pickle.dump(results,picklefile)
-        if return_msg:
-            return err_msg
-        return
+        if force_mask:
+            _, _, _, target_coord_pixel = get_neighbours(results, WCS)
+            aperture = np.zeros_like(background_mask)
+            target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0].astype(int)
+            aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
+            results.masks.aperture = aperture
+        else:
+            # Save results
+            results.tag = err_msg
+            with open(output,'wb') as picklefile:
+                pickle.dump(results,picklefile)
+            if return_msg:
+                return err_msg
+            return
     # Variation in time of aperture's center of mass
     centroid_col, centroid_row = tpf.estimate_centroids(aperture_mask=results.masks.aperture, method='quadratic')
     centroid_col = centroid_col.value - tpf.column
@@ -1574,6 +1716,8 @@ def extract_light_curve(fitsFile,
                                         time=tpf.time.value)
     # Fit the image and find the contamination fraction within the aperture mask
     fitted_image, err_msg = contamination(results, prepend_err_msg=id_msg)
+    results.masks.aperture = results.masks.aperture & (results.fit.fraction_contamination_ap_pixel<contamination_level)
+
     if fitted_image is None:
         # Save results
         results.tag = err_msg
@@ -1722,7 +1866,7 @@ def group_lcs(inputdir,
     filesTable.sort_values(by=['tic','sector'], inplace=True)
     # Select the TIC number to process
     if not TICs == 'all':
-        if isinstance(TICs,int):
+        if isinstance(TICs, (int, np.integer)):
             filesTable = filesTable.query('tic == @TICs')
         elif isinstance(TICs,(list,np.ndarray)):
             filesTable = filesTable.query('tic in @TICs')
@@ -1730,7 +1874,7 @@ def group_lcs(inputdir,
             raise ValueError(f'TICs must be "all", an integer or a list of integers. Got {TICs}')
     # Select the sectors to process
     if not sectors == 'all':
-        if isinstance(sectors,int):
+        if isinstance(sectors, (int, np.integer)):
             filesTable = filesTable.query('sector == @sectors')
         elif isinstance(sectors,(list,np.ndarray)):
             filesTable = filesTable.query('sector in @sectors')
@@ -1833,7 +1977,7 @@ def stitch_group(inputdir,
     filesTable.sort_values(by=['tic'], inplace=True)
     # Select the TIC number to process
     if not TICs == 'all':
-        if isinstance(TICs,int):
+        if isinstance(TICs,(int, np.integer)):
             filesTable = filesTable.query('tic == @TICs')
         elif isinstance(TICs,(list,np.ndarray)):
             filesTable = filesTable.query('tic in @TICs')
@@ -2010,7 +2154,7 @@ def get_group_summary(files,
             filesTable.sort_values(by=['tic'], inplace=True)
             # Select the TIC number to process
             if not TICs == 'all':
-                if isinstance(TICs,int):
+                if isinstance(TICs,(int, np.integer)):
                     filesTable = filesTable.query('tic == @TICs')
                 elif isinstance(TICs,(list,np.ndarray,pd.core.series.Series)):
                     filesTable = filesTable.query('tic in @TICs')
