@@ -204,7 +204,7 @@ def download_tpf(TIC,
                 print(f'Skipped TIC = {TIC}: There is a problem with the requested image. Excepion -> {e_name}: {e}.')
                 return
             print(f'Download try number {tries} for TIC={TIC}. Excepion -> {e_name}: {e}')
-            # ? Need to add return statement here ?
+            return
         tries += 1
 
     # Save as FITS files
@@ -242,13 +242,24 @@ def norm_and_bin_lc(lc, time_bin_size=0.5*u.h):
     stitching them.
     possiblity of binning
     added by dario
+
+    Parameters
+    ----------
+    lc : lightkurve.LightCurve
+        The lightcurve we are working with
+    time_bin_size : astro.units.quantity.Quantity (dimensions time)
+        Time interval for binning. Default is 30 min.
+
+    Returns
+    -------
+    lc: lightkurve.LightCurve
+        Binned light curve.
     '''
     median = np.nanmedian(lc.flux)
     lc = (lc - median) / median
 
     if np.min(np.diff(lc.time)) < time_bin_size:
-        # below is a workaround for
-        # https://github.com/astropy/astropy/issues/11704
+        # below is a workaround for https://github.com/astropy/astropy/issues/11704
         lc.primary_key = ("time",)
         lc = lc.bin(time_bin_size=time_bin_size)
 
@@ -814,6 +825,40 @@ def aperture_with_neighbour(results, overlap, fraction=0.05, id_msg=None):
     return np.array(remain_overlap)
 
 
+def make_forced_aperture(target_coords_pixel_binned, aperture, forced_size, tpf):
+
+    if (forced_size[0] == 1) & (forced_size[1] == 1):
+        aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
+
+    else:
+        trgt_pos_x = target_coords_pixel_binned[0]
+        trgt_pos_y = target_coords_pixel_binned[1]
+        idxs = [0]
+        idys = [0]
+        for i in range(1, forced_size[0]):
+            if (i % 2) == 0:
+                idxs.append(-idxs[-1])
+                continue
+            if tpf[trgt_pos_x - i, trgt_pos_y] > tpf[trgt_pos_x + i, trgt_pos_y]:
+                idxs.append(-i)
+            else:
+                idxs.append(i)
+        for i in range(1, forced_size[1]):
+            if (i % 2) == 0:
+                idys.append(-idys[-1])
+                continue
+            if tpf[trgt_pos_x, trgt_pos_y - i] > tpf[trgt_pos_x, trgt_pos_y + i]:
+                idys.append(-i)
+            else:
+                idys.append(i)
+
+        aperture[np.array(idxs) + trgt_pos_x, trgt_pos_y] = 1  # movememnt in x direction
+        aperture[trgt_pos_x, np.array(idys) + trgt_pos_y] = 1  # movement in y direction
+        aperture[np.array(idxs) + trgt_pos_x, np.array(idys) + trgt_pos_y] = 1  # diagonal movement
+
+    return aperture
+
+
 def get_neighbours(info, wcs,
                    arcsec_per_pixel=21*u.arcsec,  # TESS CCD
                    delta_mag=4,
@@ -926,8 +971,7 @@ def refine_aperture(info,
                     thresholds=iter([7.5, 10, 15, 20, 30, 40, 50]),
                     arcsec_per_pixel=21*u.arcsec,  # TESS CCD,
                     delta_mag=4,
-                    contamination_level=0.01,
-                    force_mask=False):
+                    contamination_level=0.01):
     """
     Purpose:
         Find an aperture mask that only contains one source and only
@@ -1012,14 +1056,11 @@ def refine_aperture(info,
                         aperture[int(r[0])][int(r[1])] = False
                         info.masks.aperture = aperture
                     if np.sum(aperture.astype(int)) == 0:
-                        if force_mask:
-                            aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
-                        else:
-                            # If no aperture left, set the aperture to `None`
-                            err_msg = utils.print_err('Not isolated target star.',
-                                                      prepend=prepend_err_msg)
-                            info.masks.aperture = None
-                            return None, err_msg
+                        # If no aperture left, set the aperture to `None`
+                        err_msg = utils.print_err('Not isolated target star.',
+                                                  prepend=prepend_err_msg)
+                        info.masks.aperture = None
+                        return None, err_msg
                     break
                 if remaining_overlap.sum() == 0:
                     break
@@ -1030,23 +1071,17 @@ def refine_aperture(info,
                     aperture = threshold_mask(image, threshold=threshold,
                                               reference_pixel='center')
                 except StopIteration:
-                    if force_mask:
-                        aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
-                    else:
-                        # If no more thresholds to try, set the aperture to `None`
-                        err_msg = utils.print_err('Not isolated target star.',
-                                                  prepend=prepend_err_msg)
-                        info.masks.aperture = None
-                        return None, err_msg
+                    # If no more thresholds to try, set the aperture to `None`
+                    err_msg = utils.print_err('Not isolated target star.',
+                                              prepend=prepend_err_msg)
+                    info.masks.aperture = None
+                    return None, err_msg
                 if np.sum(aperture.astype(int)) == 0:
-                    if force_mask:
-                        aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
-                    else:
-                        # If no aperture left, set the aperture to `None`
-                        err_msg = utils.print_err('Not isolated target star.',
-                                                  prepend=prepend_err_msg)
-                        info.masks.aperture = None
-                        return None, err_msg
+                    # If no aperture left, set the aperture to `None`
+                    err_msg = utils.print_err('Not isolated target star.',
+                                              prepend=prepend_err_msg)
+                    info.masks.aperture = None
+                    return None, err_msg
 
     # The code below breaks in crowded fields, it might also add pixel back in
     # that we just removed from the aperture
@@ -1069,14 +1104,11 @@ def refine_aperture(info,
                                         np.array([-1, 0, 1]) + target_coords_pixel_binned[0]],
                                        order=0)
     if overlaps.sum() == 0:
-        if force_mask:
-            aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
-        else:
-            err_msg = utils.print_err('Target star not within the mask.',
-                                      prepend=prepend_err_msg)
-            print(err_msg)
-            info.masks.aperture = None
-            return None, err_msg
+        err_msg = utils.print_err('Target star not within the mask.',
+                                  prepend=prepend_err_msg)
+        print(err_msg)
+        info.masks.aperture = None
+        return None, err_msg
     # Store to info
     info.masks.aperture = aperture
     return aperture, err_msg
@@ -1317,7 +1349,9 @@ def extract_light_curve(fitsFile,
                         aperture_mask_max_elongation=14,
                         contamination_level=0.01,
                         save_neighbours=False,
-                        force_mask=False):
+                        aperture_type='auto',
+                        forced_size=[2, 2],
+                        aperture=None):
     """
     Purpose:
         Extract light curve from a TESS Target Pixel File (TPF).
@@ -1596,7 +1630,8 @@ def extract_light_curve(fitsFile,
                                        aperture_mask_max_elongation=aperture_mask_max_elongation,
                                        contamination_level=contamination_level,
                                        save_neighbours=save_neighbours,
-                                       force_mask=force_mask)
+                                       aperture_type=aperture_type,
+                                       forced_size=forced_size)
         # Use a simple for loop (to avoid multiprocessing issues)
         if ncores == 1:
             for i, fitsfile in enumerate(fitsFile):
@@ -1671,23 +1706,37 @@ def extract_light_curve(fitsFile,
     # Estimate the median flux background
     # median_background_flux = np.median(results.median_image[background_mask])
     # Store to results
+
+    atypes = ['auto', 'size', 'forced']
+    if aperture_type not in atypes:
+        warnings.warn(f"aperture_type should be one {atypes}. Using 'auto'  as fallback now.")
+        aperture_type = 'auto'
+
     results.masks = SimpleNamespace()
     results.masks.aperture = aperture_mask
     results.masks.background = background_mask
-    # Check validity of aperture mask
-    OK_ap_mask, err_msg = check_aperture_mask(results.masks.aperture,
-                                              prepend_err_msg=id_msg,
-                                              aperture_mask_min_pixels=aperture_mask_min_pixels,
-                                              aperture_mask_max_elongation=aperture_mask_max_elongation)
-    # If aperture is not good, exit program with corresponding message
-    if not OK_ap_mask:
-        if force_mask:
-            _, _, _, target_coord_pixel = get_neighbours(results, tpf.wcs)
-            aperture = np.zeros_like(background_mask)
-            target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0].astype(int)
-            aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
-            results.masks.aperture = aperture
-        else:
+
+    if aperture_type == 'size':
+        force_mask = True  # replace it below
+        _, _, _, target_coord_pixel = get_neighbours(results, tpf.wcs)
+        aperture = np.zeros_like(background_mask)
+        target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0].astype(int)
+        aperture = make_forced_aperture(target_coords_pixel_binned, aperture, forced_size, results.median_image)
+        results.masks.aperture = aperture
+    elif aperture_type == 'forced':
+        force_mask = True  # replace it below
+        _, _, _, target_coord_pixel = get_neighbours(results, tpf.wcs)
+        # TODO implement size checking
+
+        results.masks.aperture = aperture
+    else:
+        # Check validity of aperture mask
+        OK_ap_mask, err_msg = check_aperture_mask(results.masks.aperture,
+                                                  prepend_err_msg=id_msg,
+                                                  aperture_mask_min_pixels=aperture_mask_min_pixels,
+                                                  aperture_mask_max_elongation=aperture_mask_max_elongation)
+        # If aperture is not good, exit program with corresponding message
+        if not OK_ap_mask:
             # Save results
             results.tag = err_msg
             with open(output, 'wb') as picklefile:
@@ -1695,27 +1744,27 @@ def extract_light_curve(fitsFile,
             if return_msg:
                 return err_msg
             return
-    # Refine aperture
-    try:
-        WCS = tpf.wcs
-    except IndexError:
-        # Save results
-        err_msg = id_msg+'No WCS info in header'
-        print(err_msg)
-        results.tag = err_msg
-        with open(output, 'wb') as picklefile:
-            pickle.dump(results, picklefile)
-        if return_msg:
-            return err_msg
-        return
-    results.masks.aperture, err_msg = refine_aperture(results,
-                                                      WCS,
-                                                      prepend_err_msg=id_msg,
-                                                      delta_mag=delta_mag,
-                                                      arcsec_per_pixel=arcsec_per_pixel,
-                                                      thresholds=aperture_mask_increasing_thresholds,
-                                                      contamination_level=contamination_level,
-                                                      force_mask=force_mask)
+        # Refine aperture
+        try:
+            WCS = tpf.wcs
+        except IndexError:
+            # Save results
+            err_msg = id_msg+'No WCS info in header'
+            print(err_msg)
+            results.tag = err_msg
+            with open(output, 'wb') as picklefile:
+                pickle.dump(results, picklefile)
+            if return_msg:
+                return err_msg
+            return
+
+        results.masks.aperture, err_msg = refine_aperture(results,
+                                                          WCS,
+                                                          prepend_err_msg=id_msg,
+                                                          delta_mag=delta_mag,
+                                                          arcsec_per_pixel=arcsec_per_pixel,
+                                                          thresholds=aperture_mask_increasing_thresholds,
+                                                          contamination_level=contamination_level)
     # check aperture again
     if results.masks.aperture is not None:
         OK_ap_mask, err_msg = check_aperture_mask(results.masks.aperture,
@@ -1725,11 +1774,7 @@ def extract_light_curve(fitsFile,
     # If not satisfactory aperture mask
     if results.masks.aperture is None:
         if force_mask:
-            _, _, _, target_coord_pixel = get_neighbours(results, WCS)
-            aperture = np.zeros_like(background_mask)
-            target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0].astype(int)
-            aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
-            results.masks.aperture = aperture
+            print(f"TIC {results.tic}: We ended without an aperture despite trying to force it. Investigate!")
         else:
             # Save results
             results.tag = err_msg
@@ -1750,30 +1795,27 @@ def extract_light_curve(fitsFile,
                                         time=tpf.time.value)
     # Fit the image and find the contamination fraction within the aperture mask
     fitted_image, err_msg = contamination(results, prepend_err_msg=id_msg)
-    results.masks.aperture = results.masks.aperture & (results.fit.fraction_contamination_ap_pixel
-                                                       < contamination_level)
+    if not force_mask:
+        results.masks.aperture = results.masks.aperture & (results.fit.fraction_contamination_ap_pixel
+                                                           < contamination_level)
 
-    # check a final time
-    OK_ap_mask, err_msg = check_aperture_mask(results.masks.aperture,
-                                              prepend_err_msg=id_msg,
-                                              aperture_mask_min_pixels=aperture_mask_min_pixels,
-                                              aperture_mask_max_elongation=aperture_mask_max_elongation)
+        # check a final time
+        OK_ap_mask, err_msg = check_aperture_mask(results.masks.aperture,
+                                                  prepend_err_msg=id_msg,
+                                                  aperture_mask_min_pixels=aperture_mask_min_pixels,
+                                                  aperture_mask_max_elongation=aperture_mask_max_elongation)
+    else:
+        OK_ap_mask = True
+        err_msg = ''
     # If aperture is not good, exit program with corresponding message
     if not OK_ap_mask:
-        if force_mask:
-            _, _, _, target_coord_pixel = get_neighbours(results, tpf.wcs)
-            aperture = np.zeros_like(background_mask)
-            target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0].astype(int)
-            aperture[target_coords_pixel_binned[0], target_coords_pixel_binned[1]] = 1
-            results.masks.aperture = aperture
-        else:
-            # Save results
-            results.tag = err_msg
-            with open(output, 'wb') as picklefile:
-                pickle.dump(results, picklefile)
-            if return_msg:
-                return err_msg
-            return
+        # Save results
+        results.tag = err_msg
+        with open(output, 'wb') as picklefile:
+            pickle.dump(results, picklefile)
+        if return_msg:
+            return err_msg
+        return
 
         if fitted_image is None:
             # Save results
