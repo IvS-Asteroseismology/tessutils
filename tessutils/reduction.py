@@ -1631,7 +1631,8 @@ def extract_light_curve(fitsFile,
                                        contamination_level=contamination_level,
                                        save_neighbours=save_neighbours,
                                        aperture_type=aperture_type,
-                                       forced_size=forced_size)
+                                       forced_size=forced_size,
+                                       aperture=None)
         # Use a simple for loop (to avoid multiprocessing issues)
         if ncores == 1:
             for i, fitsfile in enumerate(fitsFile):
@@ -1709,6 +1710,7 @@ def extract_light_curve(fitsFile,
 
     atypes = ['auto', 'size', 'forced']
     if aperture_type not in atypes:
+        force_mask = False
         warnings.warn(f"aperture_type should be one {atypes}. Using 'auto'  as fallback now.")
         aperture_type = 'auto'
 
