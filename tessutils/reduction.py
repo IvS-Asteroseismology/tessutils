@@ -1732,6 +1732,7 @@ def extract_light_curve(fitsFile,
 
         results.masks.aperture = aperture
     else:
+        force_mask = False
         # Check validity of aperture mask
         OK_ap_mask, err_msg = check_aperture_mask(results.masks.aperture,
                                                   prepend_err_msg=id_msg,
