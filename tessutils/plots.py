@@ -166,7 +166,7 @@ def plot_normalized_stitched_light_curve_ppt(ax,
                                              lc,
                                              separate_intervals=True,
                                              separate_threshold=1.5,
-                                             rasterized=False,
+                                             rasterize_lc=False,
                                              intervals=None):
     """Plot normalized stitched light curve in ppt on the given axes.
 
@@ -182,7 +182,7 @@ def plot_normalized_stitched_light_curve_ppt(ax,
         separate_threshold (float, optional):
             Parameter that controls how far apart cadences must be to be plotted
             separately. See doc for `separate_intervals`. Defaults to 1.5.
-        rasterized (bool, optional):
+        rasterize_lc (bool, optional):
             Whether to rasterize the plot. Defaults to False.
         intervals (dict):
             If given, separate the cadences within the given intervals. Useful
@@ -207,7 +207,7 @@ def plot_normalized_stitched_light_curve_ppt(ax,
                 flux = _lc.flux.values
                 time = _lc.time.values
                 label = label if i == 0 else None
-                ax.plot(time, flux, color=color, rasterized=rasterized, label=label)
+                ax.plot(time, flux, color=color, rasterized=rasterize_lc, label=label)
     elif separate_intervals:
         df = lc.to_pandas().reset_index()
         df['dtime'] = df['time'].diff()
@@ -216,11 +216,12 @@ def plot_normalized_stitched_light_curve_ppt(ax,
             flux = lc.flux.values
             time = lc.time.values
             label = label if i == 0 else None
-            ax.plot(time, flux, color=color, rasterized=rasterized, label=label)
+            ax.plot(time, flux, color=color, rasterized=rasterize_lc, label=label)
     else:
         flux = lc.flux.value
         time = lc.time.value
-        ax.scatter(time, flux, s=2, marker='.', linewidths=0, color=color, rasterized=rasterized, label=label)
+        ax.scatter(time, flux, s=2, marker='.', linewidths=0, color=color, rasterized=rasterize_lc,
+                   label=label)
     ax.set_ylabel('Normalized\nflux (ppt)')
     ax.legend(ncol=1, loc='best', frameon=False)
 
@@ -228,7 +229,8 @@ def plot_normalized_stitched_light_curve_ppt(ax,
 def plot_sector(sectorInfo,
                 figure,
                 grid,
-                verbose=True):
+                verbose=True,
+                rasterize_lc=False):
     """Plot a diagnostic figure for a given sector.
 
     Args:
@@ -473,7 +475,7 @@ def plot_sector(sectorInfo,
         # Return True if the plot reaches a satisfactory fitted image
         return True
 
-    def plot_timeSeries(fig, grid, info, TitleFontSize):
+    def plot_timeSeries(fig, grid, info, TitleFontSize, rasterize_lc=rasterize_lc):
         """Plot at most three diagnosis plots regarding the light curve
         extraction on the given figure and grid.
 
@@ -516,7 +518,7 @@ def plot_sector(sectorInfo,
                            centroids,
                            separate_intervals=True,
                            separate_threshold=1.5,
-                           rasterized=False):
+                           rasterize_lc=rasterize_lc):
             """Plot the centroid of the target star over time on the given axis.
 
             Args:
@@ -535,7 +537,7 @@ def plot_sector(sectorInfo,
                 separate_threshold (float, optional):
                     Parameter that controls how far apart cadences must be to be plotted
                     separately. See doc for `separate_intervals`. Defaults to 1.5.
-                rasterized (bool, optional):
+                rasterize_lc (bool, optional):
                     Whether to rasterize the plot. Defaults to False.
 
             Returns:
@@ -556,9 +558,9 @@ def plot_sector(sectorInfo,
                     centroid = centroids.centroid.values
                     time = centroids.time.values
                     label = label if i == 0 else None
-                    ax.plot(time, centroid, color=color, rasterized=rasterized, label=label)
+                    ax.plot(time, centroid, color=color, rasterized=rasterize_lc, label=label)
             else:
-                ax.plot(time, centroid, color=color, rasterized=rasterized, label=label)
+                ax.plot(time, centroid, color=color, rasterized=rasterize_lc, label=label)
             ax.set_ylabel('Pix')
             ax.label_outer()
             ax.legend(ncol=1, loc='best', frameon=False)
@@ -568,7 +570,7 @@ def plot_sector(sectorInfo,
                                            trend,
                                            separate_intervals=True,
                                            separate_threshold=1.5,
-                                           rasterized=False):
+                                           rasterize_lc=rasterize_lc):
             """Plot the raw light curve and trend on the given axis.
 
             Args:
@@ -585,7 +587,7 @@ def plot_sector(sectorInfo,
                 separate_threshold (float, optional):
                     Parameter that controls how far apart cadences must be to be plotted
                     separately. See doc for `separate_intervals`. Defaults to 1.5.
-                rasterized (bool, optional):
+                rasterize_lc (bool, optional):
                     Whether to rasterize the plot. Defaults to False.
 
             Returns:
@@ -603,7 +605,7 @@ def plot_sector(sectorInfo,
                     flux = lc.flux.values
                     time = lc.time.values
                     label = label_lc if i == 0 else None
-                    ax.plot(time, flux, color=color_lc, rasterized=rasterized, label=label)
+                    ax.plot(time, flux, color=color_lc, rasterized=rasterize_lc, label=label)
                 df = trend.to_pandas().reset_index()
                 df['dtime'] = df['time'].diff()
                 ind = df.query('dtime > @separate_threshold*dtime.min()').index
@@ -611,14 +613,16 @@ def plot_sector(sectorInfo,
                     flux = trend.flux.values
                     time = trend.time.values
                     label = label_trend if i == 0 else None
-                    ax.plot(time, flux, color=color_trend, rasterized=rasterized, label=label)
+                    ax.plot(time, flux, color=color_trend, rasterized=rasterize_lc, label=label)
             else:
                 lcTime = lc.time.value
                 lcFlux = lc.flux.value
                 trendTime = trend.time.value
                 trendFlux = trend.flux.value
-                ax.plot(lcTime, lcFlux, color=color_lc, rasterized=rasterized, zorder=3, label=label_lc)
-                ax.scatter(trendTime, trendFlux, color=color_trend, marker='*', rasterized=rasterized, s=1,
+                ax.plot(lcTime, lcFlux, color=color_lc, rasterized=rasterize_lc, zorder=3,
+                        label=label_lc)
+                ax.scatter(trendTime, trendFlux, color=color_trend, marker='*',
+                           rasterized=rasterize_lc, s=1,
                            zorder=4, linewidths=0, label=label_trend)
             ax.set_ylabel('e$^{-}$/s')
             ax.legend(ncol=1, loc='best', frameon=False)
@@ -629,7 +633,7 @@ def plot_sector(sectorInfo,
                                        lc,
                                        separate_intervals=True,
                                        separate_threshold=1.5,
-                                       rasterized=False):
+                                       rasterize_lc=rasterize_lc):
             """Plot the detrended light curve on the given axis.
 
             Args:
@@ -644,7 +648,7 @@ def plot_sector(sectorInfo,
                 separate_threshold (float, optional):
                     Parameter that controls how far apart cadences must be to be plotted
                     separately. See doc for `separate_intervals`. Defaults to 1.5.
-                rasterized (bool, optional):
+                rasterize_lc (bool, optional):
                     Whether to rasterize the plot. Defaults to False.
 
             Returns:
@@ -660,11 +664,11 @@ def plot_sector(sectorInfo,
                     flux = _lc.flux.values
                     time = _lc.time.values
                     label = label if i == 0 else None
-                    ax.plot(time, flux, color=color, rasterized=rasterized, label=label)
+                    ax.plot(time, flux, color=color, rasterized=rasterize_lc, label=label)
             else:
                 flux = lc.flux.value
                 time = lc.time.value
-                ax.plot(time, flux, color=color, rasterized=rasterized, label=label)
+                ax.plot(time, flux, color=color, rasterized=rasterize_lc, label=label)
 
             # Set ylabel
             ylabel = lc.flux.unit.to_string()
@@ -718,7 +722,8 @@ def plot_sector(sectorInfo,
         # If not trend is available, stop here and display the error message
         if info.lc_trend is None:
             text = '\n'.join([t for t in utils.chunks(info.tag, 47)])
-            ax2.text(0.5, 0.5, text, transform=ax2.transAxes, fontsize=1.1*TitleFontSize, ha='center', va='center',
+            ax2.text(0.5, 0.5, text, transform=ax2.transAxes, fontsize=1.1*TitleFontSize,
+                     ha='center', va='center',
                      color='green', wrap=True)
             ax.legend(ncol=1, loc='best', frameon=False)
             ax2.label_outer()
@@ -780,7 +785,8 @@ def plot_sector(sectorInfo,
                 for j, pc in enumerate(np.split(df, ind)):
                     ax.plot(pc.time.values, pc.pc.values+offset, color=color, rasterized=rasterized)
             else:
-                ax.scatter(time, pc+offset, marker='.', rasterized=rasterized, s=1, zorder=3, linewidths=0)
+                ax.scatter(time, pc+offset, marker='.', rasterized=rasterized, s=1, zorder=3,
+                           linewidths=0)
             # ax.scatter(time,pc+offset, marker='.', rasterized=True, s=1, zorder=3, linewidths=0)
         for pc in info.pca_all.pc[:-1][n:]:
             i += 1
@@ -793,7 +799,8 @@ def plot_sector(sectorInfo,
                 for j, pc in enumerate(np.split(df, ind)):
                     ax.plot(pc.time.values, pc.pc.values+offset, color=color, rasterized=rasterized)
             else:
-                ax.scatter(time, pc+offset, marker='.', color=color, rasterized=rasterized, s=1, zorder=2, linewidths=0)
+                ax.scatter(time, pc+offset, marker='.', color=color, rasterized=rasterized,
+                           s=1, zorder=2, linewidths=0)
         ax.axes.get_yaxis().set_visible(False)
         # Set xlabel
         xlabel = utils.parse_lc_time_units(info.lc_regressed.lc, short=True)
@@ -868,7 +875,8 @@ def plot_diagnosis(sectorInfo,
                    verbose=True,
                    pdfname=None,
                    pg_snr=4,
-                   binlc=False):
+                   binlc=False,
+                   rasterize_lc=False):
     """
     Purpose:
         Generate a PDF file with the diagnosis plots obtained from the output of
@@ -890,7 +898,12 @@ def plot_diagnosis(sectorInfo,
         pg_snr (int, optional):
             Signal-noise ratio level of marked peaks in the periodogram.
             Defaults to 4.
-
+        rasterize_lc (bool):
+            If True, rasterize the light curve plots to avoid overly large pdf files.
+            Use this option, when you
+            1) use light curves covering the entire mission duration.
+            2) many light curves from the year 4+ with short cadence.
+            Default is False.
     Returns:
         None
     """
@@ -931,7 +944,8 @@ def plot_diagnosis(sectorInfo,
     sector_intervals = {}
     # One sector at a time
     for i, sectorInfo in enumerate(sectorsInfo):
-        figure = plot_sector(sectorInfo, figure, main3Rows[i], verbose=verbose)
+        figure = plot_sector(sectorInfo, figure, main3Rows[i], verbose=verbose,
+                             rasterize_lc=rasterize_lc)
         # Collect only if the light curve extraction was successful
         if sectorInfo.tag == 'OK':
             lcs.append(sectorInfo.lc_regressed_clean)  # Detrended light curve without outliers
@@ -950,7 +964,9 @@ def plot_diagnosis(sectorInfo,
         lc *= 1000
         # Plot the stitched light curve
         ax = figure.add_subplot(main3Rows[-2])
-        plot_normalized_stitched_light_curve_ppt(ax, lc, separate_intervals=True, intervals=sector_intervals)
+        plot_normalized_stitched_light_curve_ppt(ax, lc, separate_intervals=True,
+                                                 intervals=sector_intervals,
+                                                 rasterize_lc=rasterize_lc)
         overplot_sector_intervals(ax, sector_intervals)
         # Generate the Lomb-Scarglet periodogram
         pg = lc.to_periodogram()
