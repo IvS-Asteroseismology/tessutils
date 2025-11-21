@@ -1731,6 +1731,8 @@ def extract_light_curve(fitsFile,
         # TODO implement size checking
 
         results.masks.aperture = aperture
+    elif aperture_type == 'halo':
+        NotImplementedError()
     else:
         force_mask = False
         # Check validity of aperture mask
