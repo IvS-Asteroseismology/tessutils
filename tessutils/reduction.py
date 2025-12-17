@@ -1989,13 +1989,14 @@ def group_lcs(inputdir,
     else:
         raise ValueError(f'TICs must be "all", an integer or a list of integers. Got {TICs}')
     # Select the sectors to process
-    if not sectors == 'all':
-        if isinstance(sectors, (int, np.integer)):
-            filesTable = filesTable.query('sector == @sectors')
-        elif isinstance(sectors, (list, np.ndarray)):
-            filesTable = filesTable.query('sector in @sectors')
-        else:
-            raise ValueError(f'`sectors` must be "all", an integer or a list of integers. Got {sectors}.')
+    if isinstance(sectors, str) and sectors.lower() == 'all':
+        pass
+    elif isinstance(sectors, (int, np.integer)):
+        filesTable = filesTable.query('sector == @sectors')
+    elif isinstance(sectors, (list, np.ndarray)):
+        filesTable = filesTable.query('sector in @sectors')
+    else:
+        raise ValueError(f'`sectors` must be "all", an integer or a list of integers. Got {sectors}.')
     # Group filenames by the TIC number
     groups = filesTable.groupby('tic')
 
@@ -2094,13 +2095,14 @@ def stitch_group(inputdir,
     # Sort by TIC number
     filesTable.sort_values(by=['tic'], inplace=True)
     # Select the TIC number to process
-    if not TICs == 'all':
-        if isinstance(TICs, (int, np.integer)):
-            filesTable = filesTable.query('tic == @TICs')
-        elif isinstance(TICs, (list, np.ndarray)):
-            filesTable = filesTable.query('tic in @TICs')
-        else:
-            raise ValueError(f'TICs must be "all", an integer or a list of integers. Got {TICs}')
+    if isinstance(TICs, str) and TICs.lower() == 'all':
+        pass
+    elif isinstance(TICs, (int, np.integer)):
+        filesTable = filesTable.query('tic == @TICs')
+    elif isinstance(TICs, (list, np.ndarray)):
+        filesTable = filesTable.query('tic in @TICs')
+    else:
+        raise ValueError(f'TICs must be "all", an integer or a list of integers. Got {TICs}')
     # Group filenames by the TIC number
     groups = filesTable.groupby('tic')
 
@@ -2274,13 +2276,14 @@ def get_group_summary(files,
             # Sort by TIC number
             filesTable.sort_values(by=['tic'], inplace=True)
             # Select the TIC number to process
-            if not TICs == 'all':
-                if isinstance(TICs, (int, np.integer)):
-                    filesTable = filesTable.query('tic == @TICs')
-                elif isinstance(TICs, (list, np.ndarray, pd.core.series.Series)):
-                    filesTable = filesTable.query('tic in @TICs')
-                else:
-                    raise ValueError(f'TICs must be "all", an integer or a list of integers. Got {TICs}')
+            if isinstance(TICs, str) and TICs.lower() == 'all':
+                pass
+            elif isinstance(TICs, (int, np.integer)):
+                filesTable = filesTable.query('tic == @TICs')
+            elif isinstance(TICs, (list, np.ndarray, pd.core.series.Series)):
+                filesTable = filesTable.query('tic in @TICs')
+            else:
+                raise ValueError(f'TICs must be "all", an integer or a list of integers. Got {TICs}')
             files = filesTable['filepath'].astype(str).values
         # If given a file, make it a list
         elif Path(files).is_file():
