@@ -3,6 +3,7 @@ import signal
 import warnings
 import pickle
 import re
+import os
 from time import sleep
 from types import SimpleNamespace
 from pathlib import Path
@@ -19,11 +20,21 @@ import astropy.units as u
 from astropy.modeling import fitting, functional_models
 from astropy.coordinates import SkyCoord
 from astroquery.mast import Catalogs
+from astroquery.vizier import Vizier
 from astropy.time import Time
 from joblib import Parallel, delayed
 from tqdm import tqdm
 # Local modules
 from . import utils
+
+
+class TICQueryError(Exception):
+    """Raised when both MAST and VizieR fail to return TIC data."""
+    pass
+
+
+def _tic_handler(signum, frame):
+    raise TimeoutError("TIC catalog query timed out.")
 
 
 def download_tpf(TIC,
@@ -340,6 +351,20 @@ def threshold_mask(image,
         closest_arg = label_args[np.argmin(distances)]
         closest_label = labels[closest_arg[0], closest_arg[1]]
         return labels == closest_label
+
+
+def _query_tic_vizier(target_coord, search_radius):
+    """Fallback query to VizieR TIC v8.2 (IV/39/tic82)."""
+    v = Vizier(
+        columns=['TIC', 'RAJ2000', 'DEJ2000', 'Tmag'],
+        row_limit=-1
+    )
+    result = v.query_region(target_coord, radius=search_radius, catalog='IV/39/tic82')
+    if len(result) == 0:
+        return None
+    table = result[0]
+    table.rename_columns(['TIC', 'RAJ2000', 'DEJ2000'], ['ID', 'ra', 'dec'])
+    return table
 
 
 def query_TIC(target,
