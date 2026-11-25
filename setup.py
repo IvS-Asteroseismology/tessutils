@@ -20,6 +20,8 @@ setup(
         'peakutils>=1.3.4',
         'scipy>=1.7.3',
         'tqdm>=4.64.0',
+        'tess-point'
+        's3fs'
     ],
     python_requires='>=3.10',
 )

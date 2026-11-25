@@ -14,6 +14,8 @@ The present code runs with no issues under Python 3.10 with the following packag
 8. [peakutils](https://peakutils.readthedocs.io/en/latest/) (1.3.4)
 9. [scipy](https://scipy.org/) (1.7.3)
 10. [tqdm](https://github.com/tqdm/tqdm) (4.64.0)
+11. [tess-point](https://github.com/tessgi/tess-point)
+12. [s3fs](https://github.com/fsspec/s3fs/)
 
 If you will also run the [tutorial](https://github.com/stefano-rgc/tessutils/blob/main/tutorial/Tessutils_tutorial.ipynb) from the Jupyter notebook below
 
@@ -24,8 +26,10 @@ then, the packages `IPython` and `ipympl` are also needed, plus I recommend open
 You can cover all requirements by installing the following virtual environment using [conda](https://docs.conda.io/en/latest).
 
 ```
-conda create --name tessutils python=3.10 astropy=5.1 astroquery=0.4.6 joblib=1.1.0 lightkurve=2.3.0 matplotlib=3.5.1 numpy=1.21.5 pandas=1.4.3 peakutils=1.3.4 scipy=1.7.3 tqdm=4.64.0 IPython ipympl --channel conda-forge
+conda create --name tessutils python=3.10 astropy=5.1 astroquery=0.4.6 joblib=1.1.0 lightkurve=2.3.0 matplotlib=3.5.1 numpy=1.21.5 pandas=1.4.3 peakutils=1.3.4 scipy=1.7.3 tqdm=4.64.0 s3fs IPython ipympl --channel conda-forge
 ```
+
+`tess-point` is only available on pypi which means you also have to `pip install tess-point` in your environment.
 
 Once created, you can activate the environment as by using the following command
 
@@ -43,7 +47,7 @@ If you wish so, you can later uninstall it with:
 
 ```
 pip uninstall tessutils
-``` 
+```
 
 # Importing Tessutils
 
@@ -52,7 +56,7 @@ If you used `pip` to install the package, then `tessutils` should be ready to im
 If you just downloaded or cloned the repository, then you need to add its location to the environment variable used by Python to search for modules, so that you can have access to the `tessutils` module regardless your location on your machine.
 
 # Run example
-Let us say we are within our Python session and interested in the star with TIC 374944608 from sector 7. 
+Let us say we are within our Python session and interested in the star with TIC 374944608 from sector 7.
 
 First, we download the corresponding Target Pixel File (TPF)
 

@@ -27,7 +27,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 # Local modules
 from . import utils
-
+from . import tess_s3_cutout
 
 class TICQueryError(Exception):
     """Raised when both MAST and VizieR fail to return TIC data."""
@@ -84,10 +84,12 @@ def download_tpf(TIC,
     source = source.lower()
     if source == "mast":
         return download_tpf_mast(TIC, ncores=ncores, imsize=imsize, outputdir=outputdir,
-                                 overwrite=overwrite, sectors=sectors, pattern=pattern, **kwargs)
+                                 overwrite=overwrite, sectors=sectors, pattern=pattern,
+                                 progressbar=progressbar, **kwargs)
     elif source == "aws":
         return download_tpf_aws(TIC, ncores=ncores, imsize=imsize, outputdir=outputdir,
-                                overwrite=overwrite, sectors=sectors, pattern=pattern)
+                                overwrite=overwrite, sectors=sectors, pattern=pattern,
+                                progressbar=progressbar, **kwargs)
     else:
         raise ValueError(f"Unknown source='{source}'. Expected 'mast' or 'aws'.")
 
@@ -310,48 +312,42 @@ def download_tpf_aws(TIC,
                      sectors=None,
                      overwrite=False,
                      progressbar=False,
-                     ncores=None):
+                     ncores=None,
+                     s3_workers=16,
+                     cache_dir=tess_s3_cutout.DEFAULT_CACHE):
     """
-    Download TESS FFI cutouts directly from AWS S3 using tess-cloud. This should be faster compared
-    to using the TESScut service at MAST.
-    """
-    try:
-        import tess_cloud
-    except ImportError as e:
-        raise ImportError("tess-cloud is required for download_source='aws'.") from e
+    Download TESS FFI cutouts directly from the public AWS S3 bucket.
+    The FITS files have the TESScut layout (incl. FLUX_ERR), so they are
+    interchangeable with the ones from `download_tpf_mast`.
 
+    Args:
+        ncores (int, optional):
+            TICs processed in parallel (threads).
+        s3_workers (int, optional):
+            parallel S3 reads per TIC/sector.
+        cache_dir (str | None, optional):
+            cache for S3 file listings and reference headers (~120 kB per CCD-sector).
+            None disables it.
+    Other arguments as in `download_tpf_mast`.
+    """
     utils.contains_TIC_and_sector(pattern)
-    out_path = Path(outputdir)
-    out_path.mkdir(parents=True, exist_ok=True)
-
+    Path(outputdir).mkdir(parents=True, exist_ok=True)
     tic_list = [int(TIC)] if np.ndim(TIC) == 0 else [int(t) for t in TIC]
 
     def _fetch_single_tic(tic_id):
         try:
-            # Query available FFI cutouts on AWS S3
-            search = tess_cloud.list_images(f"TIC {tic_id}")
-            if sectors is not None:
-                sector_set = {int(s) for s in sectors}
-                search = [img for img in search if int(img.sector) in sector_set]
-
-            for img in search:
-                sec = int(img.sector)
-                target_file = out_path / Path(pattern.format(TIC=tic_id, SECTOR=sec))
-
-                if target_file.exists() and not overwrite:
-                    continue
-
-                tpf = img.cutout(size=imsize)
-                # Ensure TICID header matches what tessutils expects
-                tpf.hdu[0].header["TICID"] = tic_id
-                tpf.to_fits(str(target_file), overwrite=overwrite)
-
+            tess_s3_cutout.cutout_tic(tic_id, size=imsize, outdir=str(outputdir),
+                                      pattern=pattern, sectors=sectors,
+                                      overwrite=overwrite, workers=s3_workers,
+                                      cache_dir=cache_dir)
         except Exception as err:
-            print(f"[AWS download warning] TIC {tic_id} failed: {err}")
+            print(f"[AWS download warning] TIC {tic_id} failed: {err!r}")
 
-    # ThreadPoolExecutor is ideal for S3 network I/O and avoids multiprocessing overhead
     with ThreadPoolExecutor(max_workers=ncores) as executor:
-        list(executor.map(_fetch_single_tic, tic_list))
+        it = executor.map(_fetch_single_tic, tic_list)
+        if progressbar:
+            it = tqdm(it, total=len(tic_list))
+        deque(it, maxlen=0)
 
 
 
@@ -2037,6 +2033,28 @@ def extract_light_curve(fitsFile,
     results.lc_raw2 = lc_sap
     # Make a design matrix and pass it to a linear regression corrector
     regressors = tpf[~nan_mask].flux[:, background_mask]
+
+    # Guard against too few cadences or background pixels for PCA
+    n_cadences, n_bkg_pixels = regressors.shape
+    if n_bkg_pixels == 0 or n_cadences < 2:
+        err_msg = id_msg + f'Not enough valid cadences ({n_cadences}) or background pixels ({n_bkg_pixels}) for PCA.'
+        results.tag = err_msg
+        with open(output, 'wb') as picklefile:
+            pickle.dump(results, picklefile)
+        if return_msg:
+            return err_msg
+        return
+
+    effective_max_pc = min(max_num_of_pc, n_cadences - 1, n_bkg_pixels - 1)
+    if effective_max_pc < 1:
+        err_msg = id_msg + f'Too few cadences ({n_cadences}) or background pixels ({n_bkg_pixels}) for PCA.'
+        results.tag = err_msg
+        with open(output, 'wb') as picklefile:
+            pickle.dump(results, picklefile)
+        if return_msg:
+            return err_msg
+        return
+
     # Number of PCs to use
     npc, dm, rc = find_number_of_PCs(results,
                                      regressors,
