@@ -10,6 +10,7 @@ from pathlib import Path
 from functools import partial
 from collections import deque
 from multiprocessing import Pool
+from concurrent.futures import ThreadPoolExecutor
 # External modules
 import numpy as np
 import pandas as pd
@@ -38,20 +39,74 @@ def _tic_handler(signum, frame):
 
 
 def download_tpf(TIC,
-                 imsize=20,
+                 ncores=1,
+                 imsize=25,
                  pattern='tic{TIC}_sec{SECTOR}.fits',
-                 outputdir='./tpfs',
-                 max_queryTries=3,
-                 max_downloadTries=10,
-                 max_saveTries=2,
+                 outputdir="./tpf/",
                  sectors=None,
                  overwrite=False,
+                 source="mast",
                  progressbar=False,
-                 ncores=None):
+                 **kwargs):
+    """
+    Download TESS FFI Target Pixel Files from MAST (TESScut) or AWS S3 (tess-cloud).
+
+    Parameters
+    ----------
+    TIC (int | list[int] | numpy.ndarray | pandas.core.series.Series):
+        TIC number(s) to download.
+    ncores (int, optional):
+        Number of parallel processes to download a list of TIC numbers. All
+        sectors available for a TIC number are under one process, i.e., the
+        parallelization happens at TIC level and not at sector level.
+        Defaults to None max out available cores.
+    imsize (int, optional):
+        Size in pixels of the square image. Defaults to 20.
+    pattern (str, optional):
+        Pattern name to save the TPF as a FITS file. Pattern must contain
+        the following two raw string used as key words: {TIC} and {SECTOR}.
+        Defaults to 'tic{TIC}_sec{SECTOR}.fits'.
+    outputdir (str, optional):
+        Directory used to store the FITS files. Defaults to ./tpfs.
+    sectors (None | int | list[int], optional):
+        TESS sectors to download. Defaults to None donwloads all.
+    overwrite (bool, optional):
+        Overwrite FITS files if already downloaded. Defaults to False.
+    progressbar (bool, optional):
+        Show a progress bar. Defaults to False.
+    source : {'mast', 'aws'}, optional
+        Data stream to use for FFI cutouts. 'mast' uses the standard TESScut
+        service; 'aws' streams cutouts directly from NASA's public AWS S3 bucket
+        via tess-cloud. Default is 'mast'.
+
+    Returns: None
+    """
+    source = source.lower()
+    if source == "mast":
+        return download_tpf_mast(TIC, ncores=ncores, imsize=imsize, outputdir=outputdir,
+                                 overwrite=overwrite, sectors=sectors, pattern=pattern, **kwargs)
+    elif source == "aws":
+        return download_tpf_aws(TIC, ncores=ncores, imsize=imsize, outputdir=outputdir,
+                                overwrite=overwrite, sectors=sectors, pattern=pattern)
+    else:
+        raise ValueError(f"Unknown source='{source}'. Expected 'mast' or 'aws'.")
+
+
+def download_tpf_mast(TIC,
+                      imsize=20,
+                      pattern='tic{TIC}_sec{SECTOR}.fits',
+                      outputdir='./tpfs',
+                      max_queryTries=3,
+                      max_downloadTries=10,
+                      max_saveTries=2,
+                      sectors=None,
+                      overwrite=False,
+                      progressbar=False,
+                      ncores=None):
     """
     Purpose:
         Download a TESS cut image(s) or target pixel file(s) (TPF) for (a) given
-        TIC number(s).
+        TIC number(s) from MAST.
 
     Args:
         TIC (int | list[int] | numpy.ndarray | pandas.core.series.Series):
@@ -101,7 +156,7 @@ def download_tpf(TIC,
     valid_types = (list, np.ndarray, pd.core.series.Series)
     if isinstance(TIC, valid_types):
         # Update kw arguments of the function
-        _download_tpf = partial(download_tpf,
+        _download_tpf = partial(download_tpf_mast,
                                 imsize=imsize,
                                 pattern=pattern,
                                 outputdir=outputdir,
@@ -126,7 +181,7 @@ def download_tpf(TIC,
         outputdir.mkdir(parents=True, exist_ok=True)
 
     # Search MAST for all FFIs available for TIC
-    tries = 1
+    tries = 0
     while True:
         if tries > max_queryTries:
             print(f'Skipped TIC={TIC}: Maximum number of MAST query retries ({max_queryTries}) exceeded.')
@@ -137,6 +192,7 @@ def download_tpf(TIC,
         except Exception as e:
             e_name = e.__class__.__name__
             print(f'MAST query attempt {tries}, TIC = {TIC}. Excepion -> {e_name}: {e}')
+            sleep(2 * (tries + 1))
         tries += 1
 
     if len(tesscuts) == 0:
@@ -215,7 +271,7 @@ def download_tpf(TIC,
                 print(f'Skipped TIC = {TIC}: There is a problem with the requested image. Excepion -> {e_name}: {e}.')
                 return
             print(f'Download try number {tries} for TIC={TIC}. Excepion -> {e_name}: {e}')
-            return
+            sleep(5 * tries)
         tries += 1
 
     # Save as FITS files
@@ -245,6 +301,58 @@ def download_tpf(TIC,
 
         # Message for successful save
         print(f'Saved: {outputname.as_posix()}')
+
+
+def download_tpf_aws(TIC,
+                     imsize=20,
+                     pattern='tic{TIC}_sec{SECTOR}.fits',
+                     outputdir='./tpfs',
+                     sectors=None,
+                     overwrite=False,
+                     progressbar=False,
+                     ncores=None):
+    """
+    Download TESS FFI cutouts directly from AWS S3 using tess-cloud. This should be faster compared
+    to using the TESScut service at MAST.
+    """
+    try:
+        import tess_cloud
+    except ImportError as e:
+        raise ImportError("tess-cloud is required for download_source='aws'.") from e
+
+    utils.contains_TIC_and_sector(pattern)
+    out_path = Path(outputdir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    tic_list = [int(TIC)] if np.ndim(TIC) == 0 else [int(t) for t in TIC]
+
+    def _fetch_single_tic(tic_id):
+        try:
+            # Query available FFI cutouts on AWS S3
+            search = tess_cloud.list_images(f"TIC {tic_id}")
+            if sectors is not None:
+                sector_set = {int(s) for s in sectors}
+                search = [img for img in search if int(img.sector) in sector_set]
+
+            for img in search:
+                sec = int(img.sector)
+                target_file = out_path / Path(pattern.format(TIC=tic_id, SECTOR=sec))
+
+                if target_file.exists() and not overwrite:
+                    continue
+
+                tpf = img.cutout(size=imsize)
+                # Ensure TICID header matches what tessutils expects
+                tpf.hdu[0].header["TICID"] = tic_id
+                tpf.to_fits(str(target_file), overwrite=overwrite)
+
+        except Exception as err:
+            print(f"[AWS download warning] TIC {tic_id} failed: {err}")
+
+    # ThreadPoolExecutor is ideal for S3 network I/O and avoids multiprocessing overhead
+    with ThreadPoolExecutor(max_workers=ncores) as executor:
+        list(executor.map(_fetch_single_tic, tic_list))
+
 
 
 def norm_and_bin_lc(lc, time_bin_size=0.5*u.h):
@@ -371,94 +479,129 @@ def query_TIC(target,
               target_coord,
               tic_id=None,
               search_radius=600.*u.arcsec,
+              max_retries=3,
+              retry_delay=5,
+              timeout=30,
+              cache_dir='./tic_cache',
               **kwargs):
     """
-    Retrieving information from the TESS input catalog.
-
-    Source
-    ----------
-    Courtesy of Dr. Timothy Van Reeth
-
-    Notes
-    ----------
-    I (Stefano) modified the behaviour when `tic_id` is given.
-
+    Query TIC catalog with local caching, MAST retries, and VizieR fallback.
+    Raises TICQueryError if all sources fail.
 
     Parameters
     ----------
     target:
         Target name
-    target_coord (optional):
-        Target coordinates (astropy Skycoord)
-    search_radius:
+    target_coord:
+        Target coordinates (astropy Skycoord).
+    search_radius (optional):
         TIC entries around the target coordinaes wihtin this radius are considered.
+        The default is 600*u.arcsec
+    max_retries:
+        Number of max retires to reach the server. Default is 3
+    retry_delay (optional):
+        Delay between retries in seconds. Default is 5.
+    timeout (optional):
+        Max time in seconds to wait before breaking. Default is 30s.
+    cache_dir:
+        Directory for a small local cache to avoid repeated server calls to MAST/VizieR. Default is
+        ./tic_cache.
     **kwargs:
         dict to be passed to astroquery.Catalogs.query_object or query_region.
-    """
+"""
+    deg_radius = search_radius.to(u.deg).value
+    radius_arcsec = int(round(search_radius.to(u.arcsec).value))
 
-    def _tic_handler(lc, signum):
-        '''Supporting function of `query_TIC`'''
-        print('the query of the TIC is taking a long time... Something may be wrong with the database right now...')
+    # Build cache key from tic_id (preferred) or coordinates
+    cache_key = f"TIC_{tic_id}_r{radius_arcsec}" if tic_id is not None else (
+        f"RA{target_coord.ra.deg:.4f}_DEC{target_coord.dec.deg:.4f}_r{radius_arcsec}"
+    )
+    cache_path = os.path.join(cache_dir, f"{cache_key}.pkl") if cache_dir else None
 
-    deg_radius = float(search_radius / u.deg)
+    catalogTIC = None
 
-    tic = None
-    tess_coord = None
-    tmag = None
+    # 1. Check local cache
+    if cache_path and os.path.exists(cache_path):
+        try:
+            with open(cache_path, 'rb') as f:
+                catalogTIC = pickle.load(f)
+        except Exception as e:
+            print(f"Cache read failed for {cache_key} ({e}); re-querying MAST server.")
+
+    # 2. Query MAST with retries
+    if catalogTIC is None:
+        for attempt in range(1, max_retries + 1):
+            try:
+                signal.signal(signal.SIGALRM, _tic_handler)
+                signal.alarm(timeout)
+                catalogTIC = Catalogs.query_region(target_coord, catalog="TIC", radius=deg_radius, **kwargs)
+                break
+            except Exception as e:
+                print(f"MAST attempt {attempt}/{max_retries} failed for {target}: {e}")
+                if attempt < max_retries:
+                    sleep(retry_delay * attempt)
+            finally:
+                signal.alarm(0)
+
+    # 3. Fallback to VizieR
+    if catalogTIC is None or len(catalogTIC) == 0:
+        print(f"MAST failed for {target}; trying VizieR fallback...")
+        try:
+            signal.signal(signal.SIGALRM, _tic_handler)
+            signal.alarm(timeout)
+            catalogTIC = _query_tic_vizier(target_coord, search_radius)
+        except Exception as e:
+            print(f"VizieR fallback failed for {target}: {e}")
+            catalogTIC = None
+        finally:
+            signal.alarm(0)
+
+    if catalogTIC is None or len(catalogTIC) == 0:
+        raise TICQueryError(f"TIC query failed on both MAST and VizieR for {target}.")
+
+    # Save to cache on success
+    if cache_path and not os.path.exists(cache_path):
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            tmp_path = f"{cache_path}.{os.getpid()}.tmp"
+            with open(tmp_path, 'wb') as f:
+                pickle.dump(catalogTIC, f)
+            os.replace(tmp_path, cache_path)
+        except Exception as e:
+            print(f"Warning: could not write TIC cache for {cache_key}: {e}")
+
+    # Normalize IDs to string so MAST and VizieR behave identically
+    ids = np.array([str(x).strip() for x in catalogTIC['ID']])
+
+    if tic_id is not None:
+        matches = np.where(ids == str(tic_id).strip())[0]
+        if len(matches) == 0:
+            raise TICQueryError(f"TIC {tic_id} not found in queried region.")
+        target_idx = matches[0]
+    else:
+        target_idx = 0
+
+    tic_found = int(ids[target_idx])
+    target_ra = float(catalogTIC['ra'][target_idx])
+    target_dec = float(catalogTIC['dec'][target_idx])
+    target_tmag = float(catalogTIC['Tmag'][target_idx])
+
+    # Retrieve the coordinates
+    tess_coord = SkyCoord(target_ra, target_dec, unit="deg")
+
+    # Collecting the neighbours
     nb_coords = []
     nb_tmags = []
-    tic_index = -1
-
-    try:
-        # The TIC query should finish relatively fast, but has sometimes taken (a lot!) longer.
-        # Setting a timer to warn the user if this is the case...
-        signal.signal(signal.SIGALRM, _tic_handler)
-        signal.alarm(30)  # This should be finished after 30 seconds, but it may take longer...
-
-        catalogTIC = Catalogs.query_region(target_coord, catalog="TIC", radius=deg_radius, **kwargs)
-        signal.alarm(0)
-
-    except:
-        print(f"no entry could be retrieved from the TIC around {target}.")
-        catalogTIC = []
-
-    if (len(catalogTIC) == 0):
-        print(f"no entry around {target} was found in the TIC within a {deg_radius:5.3f} degree radius.")
-
-    else:
-        if not (tic_id is None):
-            # tic_index = np.argmin((np.array(catalogTIC['ID'],dtype=int) - int(tic_id))**2.) # Original line
-            tic_index = np.argwhere(catalogTIC['ID'] == str(tic_id))  # Modified by Stefano
-            if tic_index.size == 0:
-                return '-1', None, None, None, None
-
-            else:
-                tic_index = tic_index.item()
-        else:
-            tic_index = np.argmin(catalogTIC['dstArcSec'])
-
-        if (tic_index < 0):
-            print(f"the attempt to retrieve target {target} from the TIC failed.")
-
-        else:
-            tic = int(catalogTIC[tic_index]['ID'])
-            ra = catalogTIC[tic_index]['ra']
-            dec = catalogTIC[tic_index]['dec']
-            tmag = catalogTIC[tic_index]['Tmag']
-
-            # Retrieve the coordinates
-            tess_coord = SkyCoord(ra, dec, unit="deg")
-
-            # Collecting the neighbours
-            if (len(catalogTIC) > 1):
-                for itic, tic_entry in enumerate(catalogTIC):
-                    if (itic != tic_index):
-                        nb_coords.append(SkyCoord(tic_entry['ra'], tic_entry['dec'], unit="deg"))
-                        nb_tmags.append(tic_entry['Tmag'])
+    if (len(catalogTIC) > 1):
+        for itic, tic_entry in enumerate(catalogTIC):
+            if (itic != target_idx):
+                nb_coords.append(SkyCoord(tic_entry['ra'], tic_entry['dec'], unit="deg"))
+                nb_tmags.append(tic_entry['Tmag'])
 
     nb_tmags = np.array(nb_tmags)
 
-    return tic, tess_coord, tmag, nb_coords, nb_tmags
+    return tic_found, tess_coord, target_tmag, nb_coords, nb_tmags
+
 
 
 def check_aperture_mask(aperture,
@@ -939,10 +1082,7 @@ def get_neighbours(info, wcs,
     tic_tmp, tess_coord, target_tmag, nb_coords, nb_tmags = query_results
     # Check we retrieve the correct target
     if tic != tic_tmp:
-        msg = 'The TIC number from the MAST query does not match the TESS FITS image.'
-        err_msg = utils.print_err(msg, prepend=prepend_err_msg)
-        print(err_msg)
-        return None, err_msg
+        raise TICQueryError(f"Queried TIC ({tic_tmp}) does not match target TIC ({tic}).")
     # Make neighbor coordenates into NumPy arrays
     nb_coords = np.array(nb_coords)
     # Store to info (get plain numbers from the AstroPy instance)
@@ -1743,58 +1883,68 @@ def extract_light_curve(fitsFile,
     results.masks.aperture = aperture_mask
     results.masks.background = background_mask
 
-    if aperture_type == 'size':
-        force_mask = True  # replace it below
-        _, _, _, target_coord_pixel = get_neighbours(results, tpf.wcs)
-        aperture = np.zeros_like(background_mask)
-        target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0].astype(int)
-        aperture = make_forced_aperture(target_coords_pixel_binned, aperture, forced_size, results.median_image)
-        results.masks.aperture = aperture
-    elif aperture_type == 'forced':
-        force_mask = True  # replace it below
-        _, _, _, target_coord_pixel = get_neighbours(results, tpf.wcs)
-        # TODO implement size checking
+    try:
+        if aperture_type == 'size':
+            force_mask = True  # replace it below
+            _, _, _, target_coord_pixel = get_neighbours(results, tpf.wcs)
+            aperture = np.zeros_like(background_mask)
+            target_coords_pixel_binned = np.floor(target_coord_pixel+0.5)[0].astype(int)
+            aperture = make_forced_aperture(target_coords_pixel_binned, aperture, forced_size, results.median_image)
+            results.masks.aperture = aperture
+        elif aperture_type == 'forced':
+            force_mask = True  # replace it below
+            _, _, _, target_coord_pixel = get_neighbours(results, tpf.wcs)
+            # TODO implement size checking
 
-        results.masks.aperture = aperture
-    elif aperture_type == 'halo':
-        NotImplementedError()
-    else:
-        force_mask = False
-        # Check validity of aperture mask
-        OK_ap_mask, err_msg = check_aperture_mask(results.masks.aperture,
-                                                  prepend_err_msg=id_msg,
-                                                  aperture_mask_min_pixels=aperture_mask_min_pixels,
-                                                  aperture_mask_max_elongation=aperture_mask_max_elongation)
-        # If aperture is not good, exit program with corresponding message
-        if not OK_ap_mask:
-            # Save results
-            results.tag = err_msg
-            with open(output, 'wb') as picklefile:
-                pickle.dump(results, picklefile)
-            if return_msg:
-                return err_msg
-            return
-        # Refine aperture
-        try:
-            WCS = tpf.wcs
-        except IndexError:
-            # Save results
-            err_msg = id_msg+'No WCS info in header'
-            print(err_msg)
-            results.tag = err_msg
-            with open(output, 'wb') as picklefile:
-                pickle.dump(results, picklefile)
-            if return_msg:
-                return err_msg
-            return
+            results.masks.aperture = aperture
+        elif aperture_type == 'halo':
+            NotImplementedError()
+        else:
+            force_mask = False
+            # Check validity of aperture mask
+            OK_ap_mask, err_msg = check_aperture_mask(results.masks.aperture,
+                                                      prepend_err_msg=id_msg,
+                                                      aperture_mask_min_pixels=aperture_mask_min_pixels,
+                                                      aperture_mask_max_elongation=aperture_mask_max_elongation)
+            # If aperture is not good, exit program with corresponding message
+            if not OK_ap_mask:
+                # Save results
+                results.tag = err_msg
+                with open(output, 'wb') as picklefile:
+                    pickle.dump(results, picklefile)
+                if return_msg:
+                    return err_msg
+                return
+            # Refine aperture
+            try:
+                WCS = tpf.wcs
+            except IndexError:
+                # Save results
+                err_msg = id_msg+'No WCS info in header'
+                print(err_msg)
+                results.tag = err_msg
+                with open(output, 'wb') as picklefile:
+                    pickle.dump(results, picklefile)
+                if return_msg:
+                    return err_msg
+                return
 
-        results.masks.aperture, err_msg = refine_aperture(results,
-                                                          WCS,
-                                                          prepend_err_msg=id_msg,
-                                                          delta_mag=delta_mag,
-                                                          arcsec_per_pixel=arcsec_per_pixel,
-                                                          thresholds=aperture_mask_increasing_thresholds,
-                                                          contamination_level=contamination_level)
+            results.masks.aperture, err_msg = refine_aperture(results,
+                                                              WCS,
+                                                              prepend_err_msg=id_msg,
+                                                              delta_mag=delta_mag,
+                                                              arcsec_per_pixel=arcsec_per_pixel,
+                                                              thresholds=aperture_mask_increasing_thresholds,
+                                                              contamination_level=contamination_level)
+    except TICQueryError as e:
+        err_msg = id_msg + f'TIC query failed: {e}'
+        print(err_msg)
+        results.tag = err_msg
+        with open(output, 'wb') as picklefile:
+            pickle.dump(results, picklefile)
+        if return_msg:
+            return err_msg
+        return
     # check aperture again
     if results.masks.aperture is not None:
         OK_ap_mask, err_msg = check_aperture_mask(results.masks.aperture,
